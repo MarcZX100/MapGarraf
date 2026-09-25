@@ -16,7 +16,7 @@ Es un proyecto comunitario independiente, no un producto de BusGarraf. No recibe
 
 ## Horarios y fuentes
 
-Los horarios incorporados en la app se transcribieron del PDF del operador publicado en julio de 2025 y corresponden a la tabla de días laborables de ese documento. La app calcula la hora de paso en cada parada a partir de las columnas del PDF; incluye ambos sentidos y advierte que el tráfico afecta a la puntualidad. No debe considerarse un horario en tiempo real: puede cambiar por temporada, festivos, huelgas o incidencias. La app enlaza la página del operador para que el viajero lo confirme antes de salir.
+Los horarios incorporados en la app se transcribieron del PDF vigente del operador (consultado el 25 de septiembre de 2026; el archivo se modificó el 22 de septiembre de 2026) y corresponden a su tabla normal de días laborables, con 18 salidas en cada sentido. Ese PDF incluye además una tabla aparte del 3 al 31 de agosto de 2026 que no se usa. En la tabla normal algunas filas aparecen repetidas (ida 08:15, 11:30 y 17:15; vuelta 09:30, 12:45 y 18:30); se cuentan como un solo servicio porque el documento no aclara si son dos vehículos. La app calcula la hora de paso en cada parada a partir de las columnas del PDF; incluye ambos sentidos y advierte que el tráfico afecta a la puntualidad. No debe considerarse un horario en tiempo real: puede cambiar por temporada, festivos, huelgas o incidencias. La app enlaza la página del operador para que el viajero lo confirme antes de salir.
 
 BusGarraf describe el viaje como unos 50 km y alrededor de 1 h 15 min. La web oficial enumera las paradas desde Plaça Eduard Maristany, en Vilanova, pasando por Cubelles, Cunit, Segur y Calafell hasta la estación de autobuses de Tarragona. El mapa dibuja una ruta de calles de OpenStreetMap calculada con OSRM pasando por las paradas publicadas en orden; es una referencia vial, no el recorrido GPS oficial del operador. Los nombres y el orden proceden de BusGarraf. Las coordenadas de parada se contrastaron con el GTFS de la Generalitat y el inventario municipal de Vilanova; hay diferencias entre ese GTFS y la lista pública del operador, por lo que algunos postes se contrastaron por su nombre.
 
@@ -25,7 +25,7 @@ Fuentes consultadas el 25 de septiembre de 2026:
 - [BusGarraf — líneas y paradas](https://busgarraf.cat/es/lineas/)
 - [BusGarraf — consulta de horarios](https://busgarraf.cat/es/busgarraf-consulta-los-horarios-de-todas-nuestras-lineas/)
 - [BusGarraf — tarifas oficiales](https://busgarraf.cat/es/tarifas/)
-- [BusGarraf — PDF de días laborables, publicado en julio de 2025](https://busgarraf.cat/wp-content/uploads/2025/07/Vilanova-i-la-Geltru-Cubelles-Cunit-Segur-de-Calafell-Calafell-Tarragona.pdf)
+- [BusGarraf — PDF de días laborables (versión vigente)](https://busgarraf.cat/wp-content/uploads/2025/09/Vilanova-Tarragona.pdf)
 - [Generalitat de Catalunya — GTFS de líneas, horarios y paradas](https://territori.gencat.cat/ca/serveis/visors-cartografia/bases-cartografiques/infraestructures-mobilitat/autobusos-interurbans/)
 - [Ajuntament de Vilanova i la Geltrú — información del bus interurbano](https://www.vilanova.cat/mobilitat/bus_interurba)
 - [OSRM — documentación de la API de rutas](https://project-osrm.org/docs/v5.6.4/api/)

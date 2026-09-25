@@ -42,14 +42,19 @@ export type Timetable = {
   arrivalAtOtherEnd: string;
 };
 
-// Transcribed from the operator PDF published in July 2025. Consult the
-// operator's live planner for service changes, seasonal schedules and holidays.
+// Transcribed from the operator's current weekday ("de dilluns a divendres (feiners)")
+// table in the PDF linked below, checked on 2026-09-25 (file last modified 2026-09-22).
+// The same PDF also has a separate 3–31 August 2026 table, which is NOT used here.
+// Every trip runs the same stop-to-stop offsets. The PDF repeats a few rows (Vilanova →
+// Tarragona 08:15, 11:30, 17:15; Tarragona → Vilanova 09:30, 12:45, 18:30); they are
+// kept as a single trip because the PDF does not say whether they are two vehicles.
+// Consult the operator's live planner for service changes, seasonal schedules and holidays.
 export const timetables: Record<Direction, Timetable> = {
   "to-tarragona": {
     direction: "to-tarragona",
     start: "Vilanova i la Geltrú",
     end: "Tarragona",
-    departures: ["06:15", "06:45", "07:15", "08:15", "09:30", "10:30", "16:45", "17:15", "18:15", "19:15"],
+    departures: ["06:15", "06:45", "07:15", "08:15", "09:30", "10:30", "11:30", "12:00", "12:30", "13:00", "13:30", "14:00", "15:00", "16:00", "16:45", "17:15", "18:15", "19:15"],
     stops: ["Plaça Eduard Maristany", "C/ Pare Garí", "C/ Aigua – C/ Bruc", "C/ Zamenhof", "Ibersol", "Cubelles Centre", "Tèrmica", "Cunit Centre", "Benzinera", "La Ponderosa", "Segur Centre", "Calafell Estació", "Calafell Poble", "Zona Universitària", "Hospital Joan XXIII", "Estació autobusos"],
     stopOffsets: [0, 3, 6, 10, 11, 15, 17, 20, 22, 23, 25, 33, 35, 70, 71, 75],
     arrivalAtOtherEnd: "20:30",
@@ -58,7 +63,7 @@ export const timetables: Record<Direction, Timetable> = {
     direction: "to-vilanova",
     start: "Tarragona",
     end: "Vilanova i la Geltrú",
-    departures: ["07:30", "08:00", "08:30", "09:30", "10:45", "11:45", "12:45", "15:15", "16:15", "17:15", "18:00", "18:30", "19:30", "20:30"],
+    departures: ["07:30", "08:00", "08:30", "09:30", "10:45", "11:45", "12:45", "13:15", "13:45", "14:15", "14:45", "15:15", "16:15", "17:15", "18:00", "18:30", "19:30", "20:30"],
     stops: ["Estació autobusos", "Hospital Joan XXIII", "Zona Universitària", "Calafell Poble", "Calafell Estació", "Segur Centre", "La Ponderosa", "Benzinera", "Cunit Centre", "Tèrmica", "Cubelles Centre", "Ibersol", "C/ Zamenhof", "C/ Aigua – C/ Bruc", "Pobles d’Espanya", "Plaça Eduard Maristany"],
     stopOffsets: [0, 2, 5, 35, 39, 45, 47, 48, 50, 53, 55, 59, 60, 64, 68, 75],
     arrivalAtOtherEnd: "21:45",
@@ -71,5 +76,5 @@ export const directionLabel: Record<Direction, string> = {
 };
 
 export const officialScheduleUrl = "https://busgarraf.cat/es/lineas/";
-export const publishedPdfUrl = "https://busgarraf.cat/wp-content/uploads/2025/07/Vilanova-i-la-Geltru-Cubelles-Cunit-Segur-de-Calafell-Calafell-Tarragona.pdf";
+export const publishedPdfUrl = "https://busgarraf.cat/wp-content/uploads/2025/09/Vilanova-Tarragona.pdf";
 export const officialTariffUrl = "https://busgarraf.cat/es/tarifas/";

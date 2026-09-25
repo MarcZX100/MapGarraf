@@ -456,7 +456,7 @@ export default function App() {
             {directionCard}
             <section className="detail-panel">
               <div className="detail-title"><div><h3>{currentDirection.start} → {currentDirection.end}</h3></div><Clock3 size={19} /></div>
-              <p className="schedule-caption">Salidas publicadas en el PDF del operador (julio de 2025). Hay cambios por temporada, festivos e incidencias; verifica antes de salir.</p>
+              <p className="schedule-caption">Salidas del PDF del operador para días laborables, consultado el 25 de septiembre de 2026. Hay cambios por temporada, festivos e incidencias; verifica antes de salir.</p>
               <label className="schedule-stop-select">Ver salidas en
                 <select value={scheduleStopIndex} onChange={(event) => setScheduleStopIndex(Number(event.target.value))}>
                   {currentDirection.stops.map((stop, index) => <option key={`${stop}-${index}`} value={index}>{stop}</option>)}
