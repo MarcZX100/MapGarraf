@@ -25,8 +25,14 @@ button, a { -webkit-tap-highlight-color: transparent; }
 button { color: inherit; }
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #69b8ac; outline-offset: 3px; }
 
-.app-shell { min-height: 100vh; padding-bottom: calc(86px + env(safe-area-inset-bottom)); }
-.topbar { height: 68px; max-width: 1120px; padding: 0 24px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; }
+.app-shell { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+.pager { flex: 1 1 auto; min-height: 0; display: flex; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; overscroll-behavior-x: contain; scrollbar-width: none; }
+.pager::-webkit-scrollbar { display: none; }
+.page { flex: 0 0 100%; min-width: 0; overflow-y: auto; overscroll-behavior-y: contain; scroll-snap-align: start; scroll-snap-stop: always; padding-bottom: 24px; }
+.page-heading { padding: 26px 2px 18px; }
+.page-heading h2 { margin: 14px 0 0; font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif; font-size: clamp(30px, 8vw, 40px); line-height: 1.1; letter-spacing: -1.6px; font-weight: 800; }
+.page-heading + .direction-card { margin-bottom: 12px; }
+.topbar { flex: none; width: 100%; height: 68px; max-width: 1120px; padding: 0 24px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; }
 .brand { display: inline-flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink); }
 .brand-mark { width: 36px; height: 36px; border-radius: 12px; display: grid; place-items: center; background: var(--teal); color: #fff; }
 .brand strong, .brand small { display: block; }
@@ -69,7 +75,7 @@ h1 span { color: var(--teal); }
 .privacy-details p { margin: 7px 0 0; color: #b5c9c2; font-size: 9px; line-height: 1.5; }
 .button-spinner { width: 15px; height: 15px; border: 2px solid rgb(18 89 79 / 24%); border-top-color: #12594f; border-radius: 50%; animation: spin .8s linear infinite; }
 .options-toggle { width: 100%; margin-top: 11px; padding: 5px 0 1px; border: 0; background: transparent; color: #d0e0da; display: flex; justify-content: center; align-items: center; gap: 5px; font-size: 10px; cursor: pointer; }
-.options-toggle svg, .info-tile > svg { transition: transform .18s ease; }
+.options-toggle svg { transition: transform .18s ease; }
 .rotate { transform: rotate(180deg); }
 .extra-options { margin-top: 15px; padding-top: 14px; border-top: 1px solid rgb(255 255 255 / 16%); display: grid; grid-template-columns: 1fr 1fr; gap: 13px 10px; }
 .extra-options label { min-width: 0; color: #d4e5df; font-size: 10px; font-weight: 600; }
@@ -181,15 +187,6 @@ h1 span { color: var(--teal); }
 .report-tags { margin-top: 8px; display: flex; flex-wrap: wrap; gap: 5px; }
 .report-tags span { padding: 4px 6px; border-radius: 6px; background: #f2f5f2; color: #65746e; display: inline-flex; align-items: center; gap: 4px; font-size: 9px; }
 
-.info-grid { margin-top: 26px; display: grid; grid-template-columns: 1fr 1fr; gap: 9px; }
-.info-tile { min-width: 0; min-height: 69px; padding: 10px; border: 1px solid var(--line); border-radius: 14px; background: #fff; display: flex; align-items: center; gap: 8px; text-align: left; cursor: pointer; }
-.info-tile:hover, .info-tile.tile-open { border-color: #b9d9ce; background: #fbfdfb; }
-.tile-icon { width: 33px; height: 33px; flex: 0 0 auto; border-radius: 10px; background: #eaf4ef; color: var(--teal); display: grid; place-items: center; }
-.info-tile > span:nth-child(2) { min-width: 0; flex: 1; }
-.info-tile strong, .info-tile small { display: block; }
-.info-tile strong { font-size: 11px; }
-.info-tile small { margin-top: 3px; color: #87928d; font-size: 8px; line-height: 1.25; }
-.info-tile > svg { flex: 0 0 auto; color: #899590; }
 .detail-panel { margin-top: 10px; padding: 15px; border: 1px solid var(--line); border-radius: 15px; background: #fff; animation: appear .16s ease-out; }
 .detail-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; color: #719087; }
 .detail-title h3 { margin: 5px 0 0; color: var(--ink); font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif; font-size: 15px; line-height: 1.3; letter-spacing: -.3px; }
@@ -224,7 +221,7 @@ h1 span { color: var(--teal); }
 .install-dialog p { margin: 9px 0 17px; color: #72817b; font-size: 12px; line-height: 1.55; }
 .install-dialog p strong { color: #47635a; }
 .dialog-action { min-height: 43px; }
-.bottom-nav { position: fixed; z-index: 1000; right: 0; bottom: 0; left: 0; min-height: calc(62px + env(safe-area-inset-bottom)); padding: 6px 20px calc(5px + env(safe-area-inset-bottom)); border-top: 1px solid #e7ebe6; background: rgb(255 255 255 / 95%); backdrop-filter: blur(14px); display: flex; align-items: center; justify-content: space-around; }
+.bottom-nav { flex: none; z-index: 1000; min-height: calc(62px + env(safe-area-inset-bottom)); padding: 6px 20px calc(5px + env(safe-area-inset-bottom)); border-top: 1px solid #e7ebe6; background: rgb(255 255 255 / 95%); backdrop-filter: blur(14px); display: flex; align-items: center; justify-content: space-around; }
 .bottom-link { min-width: 64px; padding: 5px 9px 4px; border: 0; background: transparent; color: #87938e; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 3px; font-size: 9px; text-decoration: none; cursor: pointer; }
 .bottom-link.active { color: var(--teal); font-weight: 700; }
 .bottom-link:hover { color: var(--teal); }
@@ -236,11 +233,11 @@ h1 span { color: var(--teal); }
 :root[data-theme="dark"] { color-scheme: dark; --bg: #0f1a19; --ink: #e3eeeb; --muted: #93a5a0; --teal: #2fae9f; --teal-deep: #1c8a7e; --teal-pale: #163a32; --line: #263532; --paper: #16221f; }
 [data-theme="dark"] .icon-button { background: var(--paper); color: #b5c6c1; }
 [data-theme="dark"] .icon-button:hover { background: #1f302c; color: #5fd0c0; }
-[data-theme="dark"] .brand small, [data-theme="dark"] .eyebrow, [data-theme="dark"] .intro p, [data-theme="dark"] .section-kicker, [data-theme="dark"] .distance-badge, [data-theme="dark"] .map-footnote, [data-theme="dark"] .live-pill, [data-theme="dark"] .empty-state p, [data-theme="dark"] .report-meta, [data-theme="dark"] .info-tile small, [data-theme="dark"] .schedule-caption, [data-theme="dark"] .last-service, [data-theme="dark"] .stops-list li small, [data-theme="dark"] .trust-card p, [data-theme="dark"] .page-footer, [data-theme="dark"] .map-legend, [data-theme="dark"] .schedule-stop-select, [data-theme="dark"] .install-dialog p, [data-theme="dark"] .map-live-summary small, [data-theme="dark"] .leaflet-popup-content small, [data-theme="dark"] .bottom-link, [data-theme="dark"] .direction-arrow, [data-theme="dark"] .info-tile > svg, [data-theme="dark"] .detail-title { color: #93a5a0; }
+[data-theme="dark"] .brand small, [data-theme="dark"] .eyebrow, [data-theme="dark"] .intro p, [data-theme="dark"] .section-kicker, [data-theme="dark"] .distance-badge, [data-theme="dark"] .map-footnote, [data-theme="dark"] .live-pill, [data-theme="dark"] .empty-state p, [data-theme="dark"] .report-meta, [data-theme="dark"] .schedule-caption, [data-theme="dark"] .last-service, [data-theme="dark"] .stops-list li small, [data-theme="dark"] .trust-card p, [data-theme="dark"] .page-footer, [data-theme="dark"] .map-legend, [data-theme="dark"] .schedule-stop-select, [data-theme="dark"] .install-dialog p, [data-theme="dark"] .map-live-summary small, [data-theme="dark"] .leaflet-popup-content small, [data-theme="dark"] .bottom-link, [data-theme="dark"] .direction-arrow, [data-theme="dark"] .detail-title { color: #93a5a0; }
 [data-theme="dark"] .page-footer a { color: #7fb5a8; }
 [data-theme="dark"] .empty-state strong, [data-theme="dark"] .trust-card strong, [data-theme="dark"] .map-live-summary strong, [data-theme="dark"] .install-dialog p strong { color: #cfe0db; }
 [data-theme="dark"] .eyebrow-dot { box-shadow: 0 0 0 4px rgb(232 152 50 / 20%); }
-[data-theme="dark"] .direction-card, [data-theme="dark"] .report-card, [data-theme="dark"] .info-tile, [data-theme="dark"] .detail-panel, [data-theme="dark"] .distance-badge { background: var(--paper); box-shadow: none; }
+[data-theme="dark"] .direction-card, [data-theme="dark"] .report-card, [data-theme="dark"] .detail-panel, [data-theme="dark"] .distance-badge { background: var(--paper); box-shadow: none; }
 [data-theme="dark"] .direction-switch button { border-color: #2a3c37; background: #1a2926; color: #9fb1ac; }
 [data-theme="dark"] .direction-switch button.selected { border-color: #2b7f74; background: #123c37; color: #7fdccb; box-shadow: inset 0 0 0 1px #1d5c54; }
 [data-theme="dark"] .notice { border-color: #4a3d1f; background: #2b2415; color: #e6cf9f; }
@@ -278,8 +275,6 @@ h1 span { color: var(--teal); }
 [data-theme="dark"] .report-timing--delayed { border-color: #56431a; background: #2b2210; color: #e8bf6a; }
 [data-theme="dark"] .report-timing--late { border-color: #5c2b26; background: #2e1614; color: #f0918a; }
 [data-theme="dark"] .report-timing--unknown { border-color: #2c3a36; background: #17211f; color: #9db0aa; }
-[data-theme="dark"] .info-tile:hover, [data-theme="dark"] .info-tile.tile-open { border-color: #2d5d54; background: #1a2926; }
-[data-theme="dark"] .tile-icon { background: #1a2e2a; }
 [data-theme="dark"] .schedule-stop-select select { border-color: #2b3d38; background: #1a2926; color: #cfe0db; }
 [data-theme="dark"] .departure-chip { border-color: #2b3d38; background: #1a2926; color: #b6cbc5; }
 [data-theme="dark"] .departure-chip:hover { border-color: #2b7f74; background: #1f3a34; }
@@ -302,8 +297,6 @@ h1 span { color: var(--teal); }
   .direction-card { padding: 19px; }
   .share-card { padding: 19px; }
   .route-map { height: 390px; }
-  .bottom-nav { display: none; }
-  .app-shell { padding-bottom: 20px; }
 }
 
 @media (max-width: 380px) {
@@ -324,4 +317,8 @@ h1 span { color: var(--teal); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
+}
+
+@media (min-width: 760px) {
+  .bottom-nav { justify-content: center; gap: 56px; }
 }

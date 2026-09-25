@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownUp,
   BusFront,
@@ -8,6 +8,7 @@ import {
   Compass,
   Download,
   ExternalLink,
+  ListOrdered,
   LocateFixed,
   Maximize2,
   Moon,
@@ -36,6 +37,14 @@ type InstallPrompt = Event & { prompt: () => Promise<void>; userChoice: Promise<
 
 const initialDraft: Draft = { departureTime: "", vehicleLabel: "", occupancy: null, delayMinutes: null };
 
+type Page = 0 | 1 | 2;
+const SCHEDULE_PAGE = 0, MAP_PAGE = 1, STOPS_PAGE = 2, PAGE_COUNT = 3;
+const NAV_ITEMS = [
+  { page: SCHEDULE_PAGE, label: "Horarios", Icon: Clock3 },
+  { page: MAP_PAGE, label: "Mapa", Icon: MapPinned },
+  { page: STOPS_PAGE, label: "Paradas", Icon: ListOrdered },
+] as const satisfies ReadonlyArray<{ page: Page; label: string; Icon: typeof Clock3 }>;
+
 export default function App() {
   const [direction, setDirection] = useState<Direction>("to-tarragona");
   const [reports, setReports] = useState<BusReport[]>([]);
@@ -46,14 +55,14 @@ export default function App() {
   const [loadingReports, setLoadingReports] = useState(false);
   const [showOptions, setShowOptions] = useState(false);
   const [showInstallHelp, setShowInstallHelp] = useState(false);
-  const [showSchedule, setShowSchedule] = useState(false);
   const [scheduleStopIndex, setScheduleStopIndex] = useState(0);
-  const [showStops, setShowStops] = useState(false);
   const [mapExpanded, setMapExpanded] = useState(false);
   const [followMapBus, setFollowMapBus] = useState(true);
   const [trackedMapBusId, setTrackedMapBusId] = useState<string | null>(null);
   const [installPrompt, setInstallPrompt] = useState<InstallPrompt | null>(null);
   const [theme, setTheme] = useState<Theme>(currentTheme);
+  const [page, setPage] = useState<Page>(MAP_PAGE);
+  const pagerRef = useRef<HTMLElement>(null);
 
   const mapExpandButtonRef = useRef<HTMLButtonElement>(null);
   const mapCloseButtonRef = useRef<HTMLButtonElement>(null);
@@ -68,6 +77,8 @@ export default function App() {
   const lastSentPointRef = useRef<{ lat: number; lng: number } | null>(null);
   const draftRef = useRef(draft);
   const directionRef = useRef(direction);
+  const pageRef = useRef(page);
+  pageRef.current = page;
   draftRef.current = draft;
   directionRef.current = direction;
 
@@ -118,6 +129,27 @@ export default function App() {
     applyTheme(next);
     saveTheme(next);
     setTheme(next);
+  }
+
+  useLayoutEffect(() => {
+    const pager = pagerRef.current;
+    if (!pager) return;
+    const snapToPage = () => pager.scrollTo({ left: pager.clientWidth * pageRef.current, behavior: "instant" });
+    snapToPage();
+    window.addEventListener("resize", snapToPage);
+    return () => window.removeEventListener("resize", snapToPage);
+  }, []);
+
+  function onPagerScroll(event: React.UIEvent<HTMLElement>) {
+    const { scrollLeft, clientWidth } = event.currentTarget;
+    if (clientWidth) setPage(Math.min(PAGE_COUNT - 1, Math.max(0, Math.round(scrollLeft / clientWidth))) as Page);
+  }
+
+  function goToPage(target: Page) {
+    const pager = pagerRef.current;
+    if (!pager) return;
+    const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    pager.scrollTo({ left: pager.clientWidth * target, behavior: reduceMotion ? "instant" : "smooth" });
   }
 
   const setDraftValue = <K extends keyof Draft>(key: K, value: Draft[K]) => {
@@ -361,10 +393,24 @@ export default function App() {
     setMapExpanded(true);
   }
 
+  const directionCard = (
+    <section className="direction-card" aria-label="Selecciona el sentido del viaje">
+    <div className="section-kicker"><ArrowDownUp size={15} /> ¿Hacia dónde vas?</div>
+    <div className="direction-switch">
+      <button className={direction === "to-tarragona" ? "selected" : ""} aria-pressed={direction === "to-tarragona"} disabled={shareState !== "idle"} onClick={() => void chooseDirection("to-tarragona")}>
+        <span>Vilanova</span><span className="direction-arrow">→</span><span>Tarragona</span>
+      </button>
+      <button className={direction === "to-vilanova" ? "selected" : ""} aria-pressed={direction === "to-vilanova"} disabled={shareState !== "idle"} onClick={() => void chooseDirection("to-vilanova")}>
+        <span>Tarragona</span><span className="direction-arrow">→</span><span>Vilanova</span>
+      </button>
+    </div>
+  </section>
+  );
+
   return (
     <div className="app-shell">
       <header className="topbar">
-        <a className="brand" href="#inicio" aria-label="MapGarraf, inicio">
+        <a className="brand" href="#inicio" aria-label="MapGarraf, inicio" onClick={(event) => { event.preventDefault(); goToPage(MAP_PAGE); }}>
           <span className="brand-mark"><BusFront size={19} strokeWidth={2.4} /></span>
           <span><strong>MapGarraf</strong><small>BUSGARRAF · COMUNIDAD</small></span>
         </a>
@@ -375,24 +421,40 @@ export default function App() {
         </div>
       </header>
 
-      <main id="inicio" className="main-content">
+      <main id="inicio" className="pager" ref={pagerRef} onScroll={onPagerScroll}>
+        <section className="page" id="page-schedule" aria-label="Horarios" inert={page !== SCHEDULE_PAGE}>
+          <div className="main-content">
+            <div className="page-heading"><div className="eyebrow"><span className="eyebrow-dot" />LUNES A VIERNES · DÍAS LABORABLES</div><h2>Horarios</h2></div>
+            {directionCard}
+            <section className="detail-panel">
+              <div className="detail-title"><div><h3>{currentDirection.start} → {currentDirection.end}</h3></div><Clock3 size={19} /></div>
+              <p className="schedule-caption">Salidas publicadas en el PDF del operador (julio de 2025). Hay cambios por temporada, festivos e incidencias; verifica antes de salir.</p>
+              <label className="schedule-stop-select">Ver salidas en
+                <select value={scheduleStopIndex} onChange={(event) => setScheduleStopIndex(Number(event.target.value))}>
+                  {currentDirection.stops.map((stop, index) => <option key={`${stop}-${index}`} value={index}>{stop}</option>)}
+                </select>
+              </label>
+              <div className="departure-list">{selectedStopTimes.map((time) => <button key={time} className="departure-chip" onClick={() => {
+                setDraftValue("departureTime", time);
+                setShowOptions(true);
+                goToPage(MAP_PAGE);
+                window.setTimeout(() => document.querySelector(".share-card")?.scrollIntoView({ behavior: "smooth", block: "center" }), 350);
+              }}>{time}</button>)}</div>
+              <p className="last-service">En este documento, la última llegada al destino figura a las {currentDirection.arrivalAtOtherEnd}.</p>
+              <div className="source-links"><a href={officialScheduleUrl} target="_blank" rel="noreferrer">Horario actualizado del operador <ExternalLink size={14} /></a><a href={publishedPdfUrl} target="_blank" rel="noreferrer">PDF consultado <ExternalLink size={14} /></a><a href={officialTariffUrl} target="_blank" rel="noreferrer">Tarifas oficiales <ExternalLink size={14} /></a></div>
+            </section>
+          </div>
+        </section>
+
+        <section className="page" id="page-map" aria-label="Mapa" inert={page !== MAP_PAGE}>
+        <div className="main-content">
         <section className="intro">
           <div className="eyebrow"><span className="eyebrow-dot" />TARRAGONA ↔ VILANOVA I LA GELTRÚ</div>
           <h1>El bus, un poco<br /><span>más cerca.</span></h1>
           <p>Ubicaciones compartidas por viajeros. Mira el recorrido y ayuda a la siguiente persona.</p>
         </section>
 
-        <section className="direction-card" aria-label="Selecciona el sentido del viaje">
-          <div className="section-kicker"><ArrowDownUp size={15} /> ¿Hacia dónde vas?</div>
-          <div className="direction-switch">
-            <button className={direction === "to-tarragona" ? "selected" : ""} aria-pressed={direction === "to-tarragona"} disabled={shareState !== "idle"} onClick={() => void chooseDirection("to-tarragona")}>
-              <span>Vilanova</span><span className="direction-arrow">→</span><span>Tarragona</span>
-            </button>
-            <button className={direction === "to-vilanova" ? "selected" : ""} aria-pressed={direction === "to-vilanova"} disabled={shareState !== "idle"} onClick={() => void chooseDirection("to-vilanova")}>
-              <span>Tarragona</span><span className="direction-arrow">→</span><span>Vilanova</span>
-            </button>
-          </div>
-        </section>
+        {directionCard}
 
         <section className={`share-card ${shareState === "sharing" ? "is-sharing" : ""}`}>
           <div className="share-copy">
@@ -524,52 +586,30 @@ export default function App() {
           )}
         </section>
 
-        <section className="info-grid">
-          <button className={`info-tile ${showSchedule ? "tile-open" : ""}`} onClick={() => setShowSchedule((value) => !value)} aria-expanded={showSchedule}>
-            <span className="tile-icon"><Clock3 size={19} /></span><span><strong>Horarios</strong><small>Laborables · consulta orientativa</small></span><ChevronDown size={17} className={showSchedule ? "rotate" : ""} />
-          </button>
-          <button className={`info-tile ${showStops ? "tile-open" : ""}`} onClick={() => setShowStops((value) => !value)} aria-expanded={showStops}>
-            <span className="tile-icon"><MapPin size={19} /></span><span><strong>Paradas</strong><small>16 paradas en el recorrido</small></span><ChevronDown size={17} className={showStops ? "rotate" : ""} />
-          </button>
-        </section>
-
-        {showSchedule && <section className="detail-panel">
-          <div className="detail-title"><div><span className="section-kicker">LUNES A VIERNES · DÍAS LABORABLES</span><h3>{currentDirection.start} → {currentDirection.end}</h3></div><Clock3 size={19} /></div>
-          <p className="schedule-caption">Salidas publicadas en el PDF del operador (julio de 2025). Hay cambios por temporada, festivos e incidencias; verifica antes de salir.</p>
-          <label className="schedule-stop-select">Ver salidas en
-            <select value={scheduleStopIndex} onChange={(event) => setScheduleStopIndex(Number(event.target.value))}>
-              {currentDirection.stops.map((stop, index) => <option key={`${stop}-${index}`} value={index}>{stop}</option>)}
-            </select>
-          </label>
-          <div className="departure-list">{selectedStopTimes.map((time) => <button key={time} className="departure-chip" onClick={() => {
-            setDraftValue("departureTime", time);
-            setShowOptions(true);
-            document.querySelector(".share-card")?.scrollIntoView({ behavior: "smooth", block: "center" });
-          }}>{time}</button>)}</div>
-          <p className="last-service">En este documento, la última llegada al destino figura a las {currentDirection.arrivalAtOtherEnd}.</p>
-          <div className="source-links"><a href={officialScheduleUrl} target="_blank" rel="noreferrer">Horario actualizado del operador <ExternalLink size={14} /></a><a href={publishedPdfUrl} target="_blank" rel="noreferrer">PDF consultado <ExternalLink size={14} /></a><a href={officialTariffUrl} target="_blank" rel="noreferrer">Tarifas oficiales <ExternalLink size={14} /></a></div>
-        </section>}
-
-        {showStops && <section className="detail-panel stops-panel">
-          <div className="detail-title"><div><span className="section-kicker">RECORRIDO COMPLETO</span><h3>16 paradas</h3></div><MapPin size={19} /></div>
-          <ol className="stops-list">{currentDirection.stops.map((stop, index) => <li key={`${stop}-${index}`}><span className="stop-index">{index + 1}</span><span><strong>{stop}</strong><small>{townForStop(stop)}</small></span></li>)}</ol>
-          <p className="map-footnote">Las ubicaciones exactas pueden variar; consulta la web de BusGarraf para confirmar la parada.</p>
-        </section>}
-
         <section className="trust-card"><div className="trust-icon"><Compass size={19} /></div><div><strong>Una herramienta independiente</strong><p>No está afiliada a BusGarraf ni recibe datos del operador. Las posiciones son aportaciones voluntarias y no oficiales.</p></div></section>
         <footer className="page-footer"><span>Hecho para viajar mejor por el Garraf.</span><a href="https://busgarraf.cat/es/" target="_blank" rel="noreferrer">Web oficial <ExternalLink size={13} /></a></footer>
+        </div>
+        </section>
+
+        <section className="page" id="page-stops" aria-label="Paradas" inert={page !== STOPS_PAGE}>
+          <div className="main-content">
+            <div className="page-heading"><div className="eyebrow"><span className="eyebrow-dot" />RECORRIDO COMPLETO</div><h2>Paradas</h2></div>
+            {directionCard}
+            <section className="detail-panel stops-panel">
+              <div className="detail-title"><div><h3>16 paradas</h3></div><MapPin size={19} /></div>
+              <ol className="stops-list">{currentDirection.stops.map((stop, index) => <li key={`${stop}-${index}`}><span className="stop-index">{index + 1}</span><span><strong>{stop}</strong><small>{townForStop(stop)}</small></span></li>)}</ol>
+              <p className="map-footnote">Las ubicaciones exactas pueden variar; consulta la web de BusGarraf para confirmar la parada.</p>
+            </section>
+          </div>
+        </section>
       </main>
 
-      <nav className="bottom-nav" aria-label="Navegación rápida">
-        <a className="bottom-link active" href="#map-title"><MapPinned size={18} /><span>Mapa</span></a>
-        <button className="bottom-link" onClick={() => {
-          setShowSchedule(true);
-          window.setTimeout(() => document.querySelector(".detail-panel")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
-        }}><Clock3 size={18} /><span>Horarios</span></button>
-        <button className="bottom-link" onClick={() => {
-          setShowStops(true);
-          window.setTimeout(() => document.querySelector(".stops-panel")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0);
-        }}><Users size={18} /><span>Paradas</span></button>
+      <nav className="bottom-nav" aria-label="Secciones">
+        {NAV_ITEMS.map(({ page: target, label, Icon }) => (
+          <button key={target} className={`bottom-link ${page === target ? "active" : ""}`} aria-current={page === target ? "page" : undefined} onClick={() => goToPage(target)}>
+            <Icon size={18} /><span>{label}</span>
+          </button>
+        ))}
       </nav>
 
       {showInstallHelp && <div className="dialog-backdrop" role="presentation" onClick={() => setShowInstallHelp(false)}>
