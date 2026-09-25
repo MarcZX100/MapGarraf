@@ -39,6 +39,7 @@ const initialDraft: Draft = { departureTime: "", vehicleLabel: "", occupancy: nu
 
 type Page = 0 | 1 | 2;
 const SCHEDULE_PAGE = 0, MAP_PAGE = 1, STOPS_PAGE = 2, PAGE_COUNT = 3;
+const DEFAULT_PAGE: Page = SCHEDULE_PAGE;
 const NAV_ITEMS = [
   { page: SCHEDULE_PAGE, label: "Horarios", Icon: Clock3 },
   { page: MAP_PAGE, label: "Mapa", Icon: MapPinned },
@@ -61,7 +62,7 @@ export default function App() {
   const [trackedMapBusId, setTrackedMapBusId] = useState<string | null>(null);
   const [installPrompt, setInstallPrompt] = useState<InstallPrompt | null>(null);
   const [theme, setTheme] = useState<Theme>(currentTheme);
-  const [page, setPage] = useState<Page>(MAP_PAGE);
+  const [page, setPage] = useState<Page>(DEFAULT_PAGE);
   const pagerRef = useRef<HTMLElement>(null);
 
   const mapExpandButtonRef = useRef<HTMLButtonElement>(null);
@@ -410,7 +411,7 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <a className="brand" href="#inicio" aria-label="MapGarraf, inicio" onClick={(event) => { event.preventDefault(); goToPage(MAP_PAGE); }}>
+        <a className="brand" href="#inicio" aria-label="MapGarraf, inicio" onClick={(event) => { event.preventDefault(); goToPage(DEFAULT_PAGE); }}>
           <span className="brand-mark"><BusFront size={19} strokeWidth={2.4} /></span>
           <span><strong>MapGarraf</strong><small>BUSGARRAF · COMUNIDAD</small></span>
         </a>
