@@ -28,9 +28,10 @@ type Props = {
   expanded: boolean;
   followBus: boolean;
   followReportId: string | null;
+  onUserMove: () => void;
 };
 
-export default function RouteMap({ direction, stops, reports, ghosts, expanded, followBus, followReportId }: Props) {
+export default function RouteMap({ direction, stops, reports, ghosts, expanded, followBus, followReportId, onUserMove }: Props) {
   const elementRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const routeLayersRef = useRef<L.LayerGroup | null>(null);
@@ -38,6 +39,9 @@ export default function RouteMap({ direction, stops, reports, ghosts, expanded, 
   const ghostLayersRef = useRef<L.LayerGroup | null>(null);
   const compactViewRef = useRef<{ center: L.LatLng; zoom: number } | null>(null);
   const wasExpandedRef = useRef(false);
+  const programmaticMoveRef = useRef(false);
+  const onUserMoveRef = useRef(onUserMove);
+  onUserMoveRef.current = onUserMove;
 
   useEffect(() => {
     if (!elementRef.current || mapRef.current) return;
@@ -52,6 +56,11 @@ export default function RouteMap({ direction, stops, reports, ghosts, expanded, 
     ghostLayersRef.current = L.layerGroup().addTo(map);
     reportLayersRef.current = L.layerGroup().addTo(map);
     map.setView([41.18, 1.48], 9);
+    // Any drag, pinch, wheel or zoom-button move made by the user stops following the bus.
+    // Moves the app makes itself are flagged so they are not mistaken for the user.
+    map.on("dragstart", () => onUserMoveRef.current());
+    map.on("zoomstart", () => { if (!programmaticMoveRef.current) onUserMoveRef.current(); });
+    map.on("moveend", () => { programmaticMoveRef.current = false; });
     const frame = window.requestAnimationFrame(() => map.invalidateSize({ pan: false }));
     return () => {
       window.cancelAnimationFrame(frame);
@@ -83,7 +92,9 @@ export default function RouteMap({ direction, stops, reports, ghosts, expanded, 
       }).bindPopup(`<strong>${index + 1}. ${escapeHtml(stop.name)}</strong><br>${escapeHtml(stop.town)}`).addTo(layers);
     }
 
+    programmaticMoveRef.current = true;
     map.fitBounds(L.latLngBounds(roadPoints).pad(0.12), { animate: false, maxZoom: 12 });
+    programmaticMoveRef.current = false;
   }, [direction, stops]);
 
   useEffect(() => {
@@ -131,7 +142,9 @@ export default function RouteMap({ direction, stops, reports, ghosts, expanded, 
     const frame = window.requestAnimationFrame(() => {
       map.invalidateSize({ pan: false });
       if (!expanded && wasExpanded && compactViewRef.current) {
+        programmaticMoveRef.current = true;
         map.setView(compactViewRef.current.center, compactViewRef.current.zoom, { animate: false });
+        programmaticMoveRef.current = false;
       }
     });
     return () => window.cancelAnimationFrame(frame);
@@ -168,6 +181,7 @@ export default function RouteMap({ direction, stops, reports, ghosts, expanded, 
     const point = L.latLng(report.latitude, report.longitude);
     const zoom = Math.max(map.getZoom(), 15);
     if (map.getCenter().distanceTo(point) > 15 || map.getZoom() < zoom) {
+      programmaticMoveRef.current = true;
       map.flyTo(point, zoom, { animate: true, duration: 0.55 });
     }
   }, [expanded, followBus, followReportId, reports]);

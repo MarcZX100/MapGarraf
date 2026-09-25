@@ -604,6 +604,7 @@ export default function App() {
               ghosts={ghosts}
               expanded={mapExpanded}
               followBus={followMapBus}
+              onUserMove={() => setFollowMapBus(false)}
               followReportId={trackedMapReport?.id ?? null}
             />
             <div className="map-legend"><span className="legend-bus"><BusFront size={13} /></span><span>Posición compartida</span><span className="legend-status legend-status--on-time" /><span>En hora</span><span className="legend-status legend-status--late" /><span>Retraso</span><span className="legend-status legend-status--unknown" /><span>Sin dato</span><span className="legend-stop" /><span>Parada</span>{showGhosts && <><span className="legend-ghost"><Ghost size={11} /></span><span>Fantasma · sin verificar</span></>}</div>
