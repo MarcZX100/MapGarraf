@@ -28,16 +28,19 @@ import { applyTheme, currentTheme, hasSavedTheme, saveTheme, type Theme } from "
 import RouteMap, { type BusReport } from "./RouteMap";
 import { directionLabel, officialScheduleUrl, officialTariffUrl, publishedPdfUrl, stops, timetables, type Direction } from "./data";
 import { getReportStatus } from "./reportStatus";
-import { getGhostBuses, ghostsApplyToday, unclaimedGhosts, type GhostBus } from "./ghostBuses";
+import { estimateCurrentPosition, estimateRouteStatus, getGhostBuses, ghostsApplyToday, unclaimedGhosts, type GhostBus } from "./ghostBuses";
 
 type Occupancy = "low" | "medium" | "high" | null;
 type ShareSession = { id: string; token: string };
-type Draft = { departureTime: string; vehicleLabel: string; occupancy: Occupancy; delayMinutes: number | null };
+type Draft = { departureTime: string; occupancy: Occupancy };
 type MapReport = BusReport & { supportCount: number; containsOwn: boolean };
+
+// The server flags a position as live for 3 minutes; older ones are only served so the map can estimate.
+const LIVE_REPORT_SECONDS = 180;
 type ApiError = Error & { status?: number };
 type InstallPrompt = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: "accepted" | "dismissed" }> };
 
-const initialDraft: Draft = { departureTime: "", vehicleLabel: "", occupancy: null, delayMinutes: null };
+const initialDraft: Draft = { departureTime: "", occupancy: null };
 
 type Page = 0 | 1 | 2;
 const SCHEDULE_PAGE = 0, MAP_PAGE = 1, STOPS_PAGE = 2, PAGE_COUNT = 3;
@@ -94,7 +97,8 @@ export default function App() {
       const response = await fetch(`/api/vehicles?${query}`, { headers: { Accept: "application/json" } });
       if (!response.ok) throw await responseError(response);
       const data = (await response.json()) as { reports: BusReport[] };
-      setReports(data.reports);
+      const receivedAt = Date.now();
+      setReports(data.reports.map((report) => ({ ...report, receivedAt })));
     } catch {
       if (!quiet) setNotice("No se pudo actualizar el mapa. Revisa la conexión e inténtalo de nuevo.");
     } finally {
@@ -161,10 +165,31 @@ export default function App() {
     setDraft((current) => ({ ...current, [key]: value }));
   };
 
-  const activeReports = useMemo(
-    () => aggregateReports(reports.filter((report) => report.direction === direction), myReportId),
-    [reports, direction, myReportId],
-  );
+  const activeReports = useMemo(() => {
+    const nowMs = now.getTime();
+    const current = reports
+      .filter((report) => report.direction === direction)
+      .map((report) => ({ ...report, ageSeconds: report.ageSeconds + Math.max(0, (nowMs - (report.receivedAt ?? nowMs)) / 1000) }));
+    return aggregateReports(current, myReportId).flatMap((report): MapReport[] => {
+      let displayedPosition = { latitude: report.latitude, longitude: report.longitude };
+      let estimatedPosition: ReturnType<typeof estimateCurrentPosition> = null;
+      if (report.ageSeconds > LIVE_REPORT_SECONDS) {
+        // No fresh GPS: advance the last real position along the timetable instead of leaving a stale dot.
+        estimatedPosition = estimateCurrentPosition(direction, report);
+        if (!estimatedPosition) return [];
+        displayedPosition = { latitude: estimatedPosition.latitude, longitude: estimatedPosition.longitude };
+      }
+      const timing = estimateRouteStatus(direction, report, now, displayedPosition);
+      return [{
+        ...report,
+        ...(estimatedPosition ? { ...estimatedPosition, accuracy: null, estimated: true } : {}),
+        delayMinutes: timing.delayMinutes,
+        delayBasis: timing.delayBasis,
+        nextStop: timing.nextStop ?? estimatedPosition?.nextStop,
+        minutesToNextStop: timing.minutesToNextStop,
+      }];
+    });
+  }, [reports, direction, myReportId, now]);
   useEffect(() => {
     const timer = window.setInterval(() => setNow(new Date()), 5_000);
     return () => window.clearInterval(timer);
@@ -172,7 +197,13 @@ export default function App() {
 
   const ghostsToday = ghostsApplyToday(now);
   const ghosts = useMemo(
-    () => (showGhosts ? unclaimedGhosts(getGhostBuses(direction, now), activeReports, direction, now) : []),
+    () => (showGhosts ? unclaimedGhosts(
+      getGhostBuses(direction, now),
+      // An estimate is where the bus is right now, so it counts as a zero-age position.
+      activeReports.map((report) => ({ latitude: report.latitude, longitude: report.longitude, departureTime: report.departureTime, delayMinutes: report.delayMinutes, ageSeconds: report.estimated ? 0 : report.ageSeconds })),
+      direction,
+      now,
+    ) : []),
     [showGhosts, direction, now, activeReports],
   );
 
@@ -238,9 +269,7 @@ export default function App() {
       longitude: lng,
       accuracy: Math.round(position.coords.accuracy),
       departureTime: currentDraft.departureTime || null,
-      vehicleLabel: currentDraft.vehicleLabel.trim() || null,
       occupancy: currentDraft.occupancy,
-      delayMinutes: currentDraft.delayMinutes,
     };
 
     if (!sessionRef.current) {
@@ -367,9 +396,9 @@ export default function App() {
         });
         setNotice(response.ok || response.status === 404
           ? "Has dejado de compartir y la señal se ha retirado del mapa."
-          : "Has dejado de enviar ubicación. La última señal desaparecerá del mapa en un máximo de 3 min.");
+          : "Has dejado de enviar ubicación. La última señal seguirá visible como estimación hasta 20 min.");
       } catch {
-        setNotice("Has dejado de enviar ubicación. Sin conexión, la última señal desaparecerá del mapa en un máximo de 3 min.");
+        setNotice("Has dejado de enviar ubicación. Sin conexión, la última señal seguirá visible como estimación hasta 20 min.");
       }
     } else {
       setNotice("Has dejado de compartir.");
@@ -385,10 +414,8 @@ export default function App() {
         method: "PATCH",
         headers: { "Content-Type": "application/json", "x-share-token": session.token },
         body: JSON.stringify({
-          departureTime: fields.departureTime,
-          vehicleLabel: fields.vehicleLabel?.trim() || fields.vehicleLabel,
-          occupancy: fields.occupancy,
-          delayMinutes: fields.delayMinutes,
+          ...(fields.departureTime !== undefined ? { departureTime: fields.departureTime || null } : {}),
+          ...(fields.occupancy !== undefined ? { occupancy: fields.occupancy } : {}),
         }),
       });
       if (!response.ok) throw await responseError(response);
@@ -463,8 +490,11 @@ export default function App() {
                   {currentDirection.stops.map((stop, index) => <option key={`${stop}-${index}`} value={index}>{stop}</option>)}
                 </select>
               </label>
-              <div className="departure-list">{selectedStopTimes.map((time) => <button key={time} className="departure-chip" onClick={() => {
-                setDraftValue("departureTime", time);
+              <div className="departure-list">{selectedStopTimes.map((time, index) => <button key={`${time}-${index}`} className="departure-chip" onClick={() => {
+                // The selected chip shows this service at the chosen stop; the
+                // timing model needs its departure from the route's first stop.
+                setDraftValue("departureTime", currentDirection.departures[index]);
+                if (sessionRef.current) void updateReport({ departureTime: currentDirection.departures[index] });
                 setShowOptions(true);
                 goToPage(MAP_PAGE);
                 window.setTimeout(() => document.querySelector(".share-card")?.scrollIntoView({ behavior: "smooth", block: "center" }), 350);
@@ -493,7 +523,7 @@ export default function App() {
               <span>{shareState === "sharing" ? "Solo mientras mantengas la pantalla abierta." : "Con un toque, avisa al resto de viajeros."}</span>
             </div>
           </div>
-          <p className="location-privacy">Al compartir, tu GPS exacto se muestra públicamente como posición del bus. Las señales desaparecen del mapa tras 3 min sin actualización y se borran del servidor en 24 h.</p>
+          <p className="location-privacy">Al compartir, tu GPS exacto se muestra públicamente como posición del bus. Si dejas de enviar sin pulsar «Dejar de compartir», el mapa estima por dónde va el bus según el horario, y tu última posición exacta sigue siendo pública hasta 20 min. Se borra del servidor en 24 h.</p>
           {shareState === "sharing" ? (
             <button className="share-button stop-button" onClick={() => void stopSharing()}><X size={18} /> Dejar de compartir</button>
           ) : (
@@ -503,21 +533,21 @@ export default function App() {
           )}
           <details className="privacy-details">
             <summary>Privacidad y seguridad</summary>
-            <p>Solo enviamos ubicación tras pulsar compartir y aceptar el permiso del navegador. El punto y los detalles opcionales son visibles para quien abra el mapa; no se crea una cuenta ni guardamos un historial de trayectos. Si cierras la app sin detenerlo, el punto deja de mostrarse al cabo de 3 min y se borra del servidor en un máximo de 24 h. El mapa solicita imágenes de OpenStreetMap, pero no le enviamos tu GPS. Úsalo como pasajero, nunca mientras conduces.</p>
+            <p>Solo enviamos ubicación tras pulsar compartir y aceptar el permiso del navegador. El punto y los detalles opcionales son visibles para quien abra el mapa; no se crea una cuenta ni guardamos un historial de trayectos. Si cierras la app sin detenerlo, el mapa deja de mostrar tu punto exacto a los 3 min y estima por dónde va el bus según el horario; tu última posición exacta sigue siendo accesible públicamente hasta 20 min y se borra del servidor en un máximo de 24 h. Pulsar «Dejar de compartir» la borra al instante. El mapa solicita imágenes de OpenStreetMap, pero no le enviamos tu GPS. Úsalo como pasajero, nunca mientras conduces.</p>
           </details>
           <button className="options-toggle" aria-expanded={showOptions} onClick={() => setShowOptions((value) => !value)}>
-            {showOptions ? "Ocultar opciones" : "Identificar el bus o añadir detalles"}<ChevronDown size={15} className={showOptions ? "rotate" : ""} />
+            {showOptions ? "Ocultar opciones" : "Añadir detalles útiles (opcional)"}<ChevronDown size={15} className={showOptions ? "rotate" : ""} />
           </button>
           {showOptions && (
             <div className="extra-options">
-              <label>Salida aproximada<input type="time" value={draft.departureTime} onChange={(event) => {
+              <label>Salida desde la cabecera (si la sabes)<select value={draft.departureTime} onChange={(event) => {
                 const value = event.target.value;
                 setDraftValue("departureTime", value);
                 if (sessionRef.current) void updateReport({ departureTime: value });
-              }} /></label>
-              <label>N.º del bus (opcional)<input type="text" inputMode="numeric" maxLength={30} placeholder="Ej. 204" value={draft.vehicleLabel} onChange={(event) => setDraftValue("vehicleLabel", event.target.value)} onBlur={() => {
-                if (sessionRef.current) void updateReport({ vehicleLabel: draftRef.current.vehicleLabel });
-              }} /></label>
+              }}>
+                <option value="">No lo sé</option>
+                {currentDirection.departures.map((departure) => <option key={departure} value={departure}>{departure}</option>)}
+              </select></label>
               <fieldset>
                 <legend>¿Cuánta gente lleva?</legend>
                 <div className="choice-row">
@@ -526,13 +556,7 @@ export default function App() {
                   <Choice selected={draft.occupancy === "high"} onClick={() => void updateReport({ occupancy: draft.occupancy === "high" ? null : "high" })}>Lleno</Choice>
                 </div>
               </fieldset>
-              <label>Retraso aproximado<select value={draft.delayMinutes ?? ""} onChange={(event) => {
-                const value = event.target.value === "" ? null : Number(event.target.value);
-                void updateReport({ delayMinutes: value });
-              }}>
-                <option value="">Sin dato</option><option value="0">Va en hora</option><option value="5">+5 min</option><option value="10">+10 min</option><option value="15">+15 min</option><option value="20">+20 min o más</option>
-              </select></label>
-              <p className="privacy-note"><Signal size={14} /> Estos datos son voluntarios; no pedimos cuenta ni guardamos tu nombre.</p>
+              <p className="privacy-note"><Signal size={14} /> El retraso se estima automáticamente con el GPS y el horario. Indicar la salida mejora el cálculo; la ocupación es voluntaria.</p>
             </div>
           )}
         </section>
@@ -549,7 +573,7 @@ export default function App() {
             <div>
               <strong>{showGhosts ? "Buses fantasma · sin verificar" : "Buses fantasma ocultos"}</strong>
               {showGhosts && <p>{ghostsToday
-                ? "Los fantasmas (violeta, línea discontinua) marcan dónde DEBERÍA estar cada bus según el horario publicado. Nadie ha confirmado que existan ni que circulen. Se sustituyen por la posición real cuando un viajero comparte ese bus."
+                ? "Los fantasmas (violeta, línea discontinua) marcan dónde DEBERÍA estar cada bus según el horario publicado, o de dónde debería salir en los próximos minutos. Nadie ha confirmado que existan ni que circulen. Se sustituyen por la posición real cuando un viajero comparte ese bus."
                 : "El horario incorporado es de lunes a viernes, así que hoy no se muestran buses fantasma. Solo verás buses compartidos por viajeros."}</p>}
             </div>
             <button className="ghost-toggle" aria-pressed={showGhosts} onClick={toggleGhosts}>{showGhosts ? "Ocultar" : "Mostrar"}</button>
@@ -571,8 +595,8 @@ export default function App() {
                 <div className={`map-live-summary${trackedMapReport ? " has-live-report" : ""}${trackedGhost ? " is-ghost" : ""}`} aria-live="polite">
                   <span className="map-live-indicator" />
                   <span>
-                    <strong id="map-expanded-title">{trackedGhost ? `Bus fantasma · salida ${trackedGhost.departureTime}` : trackedMapReport ? (trackedMapReport.vehicleLabel ? `Bus ${trackedMapReport.vehicleLabel}` : "Bus compartido") : "Recorrido completo"}</strong>
-                    <small>{trackedGhost ? `SIN VERIFICAR · estimado por horario${followMapBus ? " · siguiéndolo" : ""}` : trackedMapReport ? `${trackedMapReport.ageSeconds < 60 ? "ahora" : `hace ${Math.floor(trackedMapReport.ageSeconds / 60)} min`} · ${getReportStatus(trackedMapReport.delayMinutes).label}${followMapBus ? " · siguiéndolo" : ""}` : "Sin buses activos; se muestra toda la ruta."}</small>
+                    <strong id="map-expanded-title">{trackedGhost ? `Bus fantasma · salida ${trackedGhost.departureTime}` : trackedMapReport ? "Bus compartido" : "Recorrido completo"}</strong>
+                    <small>{trackedGhost ? `SIN VERIFICAR · estimado por horario${followMapBus ? " · siguiéndolo" : ""}` : trackedMapReport ? `${trackedMapReport.estimated ? "estimado · última señal real hace " + Math.floor(trackedMapReport.ageSeconds / 60) + " min" : trackedMapReport.ageSeconds < 60 ? "ahora" : `hace ${Math.floor(trackedMapReport.ageSeconds / 60)} min`} · ${getReportStatus(trackedMapReport.delayMinutes, trackedMapReport.delayBasis).label}${followMapBus ? " · siguiéndolo" : ""}` : "Sin buses activos; se muestra toda la ruta."}</small>
                   </span>
                 </div>
                 <div className="map-expanded-actions">
@@ -587,7 +611,7 @@ export default function App() {
                       }}
                     >
                       {!trackedGhost && !trackedMapReport && <option value="" disabled>Elige un bus…</option>}
-                      {activeReports.map((report, index) => <option key={report.id} value={report.id}>{report.vehicleLabel ? `Bus ${report.vehicleLabel}` : `Bus compartido ${index + 1}`}</option>)}
+                      {activeReports.map((report) => <option key={report.id} value={report.id}>{report.departureTime ? `Salida ${report.departureTime}` : report.nextStop ? `Próxima: ${report.nextStop}` : "Señal compartida"}</option>)}
                       {ghosts.map((ghost) => <option key={ghost.id} value={ghost.id}>{`Fantasma ${ghost.departureTime} · sin verificar`}</option>)}
                     </select>
                   )}
@@ -610,15 +634,15 @@ export default function App() {
               onUserMove={() => setFollowMapBus(false)}
               followReportId={trackedGhost?.id ?? trackedMapReport?.id ?? null}
             />
-            <div className="map-legend"><span className="legend-bus"><BusFront size={13} /></span><span>Posición compartida</span><span className="legend-status legend-status--on-time" /><span>En hora</span><span className="legend-status legend-status--late" /><span>Retraso</span><span className="legend-status legend-status--unknown" /><span>Sin dato</span><span className="legend-stop" /><span>Parada</span>{showGhosts && <><span className="legend-ghost"><Ghost size={11} /></span><span>Fantasma · sin verificar</span></>}</div>
+            <div className="map-legend"><span className="legend-bus"><BusFront size={13} /></span><span>Posición compartida</span><span className="legend-status legend-status--on-time" /><span>En hora</span><span className="legend-status legend-status--late" /><span>Retraso</span><span className="legend-status legend-status--unknown" /><span>Sin dato</span><span className="legend-stop" /><span>Parada</span>{activeReports.some((report) => report.estimated) && <><span className="legend-estimated" /><span>Estimado (sin señal reciente)</span></>}{showGhosts && <><span className="legend-ghost"><Ghost size={11} /></span><span>Fantasma · sin verificar</span></>}</div>
           </div>
-          <p className="map-footnote">El color resume el retraso comunicado por viajeros; «Sin dato» no significa que vaya tarde. Las 16 paradas usan ubicaciones de datos públicos; toca un punto para ver su nombre. El trazado sigue las calles entre paradas; no es una posición GPS oficial. Los buses fantasma son solo una estimación del horario y no están verificados.</p>
+          <p className="map-footnote">El retraso y la próxima parada se estiman comparando el GPS con el horario publicado; si no se identifica una salida compatible, aparecerá «Sin dato». No son datos oficiales y pueden variar por tráfico o paradas. Las 16 paradas usan ubicaciones de datos públicos; el trazado sigue las calles entre paradas. Los buses fantasma son solo una estimación del horario y no están verificados.</p>
         </section>
 
         <section className="reports-section">
           <div className="section-heading report-heading">
             <div><div className="section-kicker"><Radio size={15} /> AHORA EN LA RUTA</div><h2>{activeReports.length ? `${activeReports.length} ${activeReports.length === 1 ? "señal activa" : "señales activas"}` : "Aún no hay buses verificados"}</h2></div>
-            <span className={`live-pill ${activeReports.length ? "live" : ""}`}><i />{activeReports.length ? "EN VIVO" : "COMUNIDAD"}</span>
+            <span className={`live-pill ${activeReports.length ? "live" : ""}`}><i />{activeReports.some((report) => !report.estimated) ? "EN VIVO" : activeReports.length ? "ESTIMADO" : "COMUNIDAD"}</span>
           </div>
           {activeReports.length ? (
             <div className="report-list">
@@ -701,7 +725,9 @@ function GhostCard({ ghost, onClaim }: { ghost: GhostBus; onClaim: () => void })
     <div className="report-main">
       <div className="report-title"><strong>Bus fantasma · salida {ghost.departureTime}</strong><span className="ghost-pill">SIN VERIFICAR</span></div>
       <div className="report-meta"><span>Llegada prevista {ghost.arrivalTime}</span></div>
-      <p className="ghost-where">Según el horario, ahora estaría entre <strong>{ghost.previousStop}</strong> y <strong>{ghost.nextStop}</strong>.</p>
+      <p className="ghost-where">{ghost.departsInMinutes !== null
+        ? <>Según el horario, saldría de <strong>{ghost.previousStop}</strong> a las <strong>{ghost.departureTime}</strong> (en {ghost.departsInMinutes} min).</>
+        : <>Según el horario, ahora estaría entre <strong>{ghost.previousStop}</strong> y <strong>{ghost.nextStop}</strong>.</>}</p>
       <p className="ghost-warning">Solo es una estimación: nadie ha confirmado que este bus circule ni dónde está. Puede no existir, ir con retraso o no haber salido.</p>
       <button className="ghost-claim" onClick={onClaim}>Voy en este bus</button>
     </div>
@@ -710,12 +736,15 @@ function GhostCard({ ghost, onClaim }: { ghost: GhostBus; onClaim: () => void })
 
 function ReportCard({ report, own }: { report: MapReport; own: boolean }) {
   const crowd = report.occupancy === "low" ? "Hay sitio" : report.occupancy === "medium" ? "Ocupación normal" : report.occupancy === "high" ? "Lleno" : null;
-  const status = getReportStatus(report.delayMinutes);
-  const age = report.ageSeconds < 60 ? "ahora" : `hace ${Math.floor(report.ageSeconds / 60)} min`;
-  return <article className="report-card">
+  const status = getReportStatus(report.delayMinutes, report.delayBasis);
+  const minutes = Math.floor(report.ageSeconds / 60);
+  const age = report.ageSeconds < 60 ? "ahora" : `hace ${minutes} min`;
+  return <article className={`report-card${report.estimated ? " report-card--estimated" : ""}`}>
     <span className="report-bus"><BusFront size={19} /></span>
-    <div className="report-main"><div className="report-title"><strong>{report.vehicleLabel ? `Bus ${report.vehicleLabel}` : "Bus en ruta"}{report.supportCount > 1 ? ` · ${report.supportCount} avisos` : ""}</strong>{own && <span className="mine-pill">TU SEÑAL</span>}</div>
-      <div className="report-meta"><span><span className="fresh-dot" />{age}</span>{report.departureTime && <span>Salida {report.departureTime}</span>}{report.accuracy !== null && <span>±{Math.round(report.accuracy)} m</span>}</div>
+    <div className="report-main"><div className="report-title"><strong>Bus en ruta{report.supportCount > 1 ? ` · ${report.supportCount} avisos` : ""}</strong>{own && <span className="mine-pill">TU SEÑAL</span>}{report.estimated && <span className="estimate-pill">POSICIÓN ESTIMADA</span>}</div>
+      {report.estimated && <p className="estimate-note">Última posición real hace {minutes} min{report.previousStop && report.nextStop ? <>; según el horario, ahora estaría entre <strong>{report.previousStop}</strong> y <strong>{report.nextStop}</strong></> : ""}. Es una estimación: puede no ser exacta.</p>}
+      <div className="report-meta">{report.estimated ? null : <span><span className="fresh-dot" />{age}</span>}{report.departureTime && <span>Salida {report.departureTime}</span>}{report.accuracy !== null && <span>GPS ±{Math.round(report.accuracy)} m</span>}</div>
+      {report.nextStop && <div className="report-next-stop"><Navigation size={13} /><span>Próxima: <strong>{report.nextStop}</strong></span>{report.minutesToNextStop !== null && report.minutesToNextStop !== undefined && <span className="report-eta">~{report.minutesToNextStop} min</span>}</div>}
       <div className={`report-timing report-timing--${status.kind}`}><span className="report-timing-dot" /><strong>{status.label}</strong><span className="report-timing-explanation">{status.explanation}</span></div>
       {crowd && <div className="report-tags"><span><Users size={12} />{crowd}</span></div>}
     </div>
@@ -729,7 +758,6 @@ function aggregateReports(reports: BusReport[], ownId: string | null): MapReport
       const first = candidate[0];
       if (Math.abs(first.ageSeconds - report.ageSeconds) > 45) return false;
       if (first.departureTime && report.departureTime && first.departureTime !== report.departureTime) return false;
-      if (first.vehicleLabel && report.vehicleLabel && first.vehicleLabel !== report.vehicleLabel) return false;
       return distanceMeters(first.latitude, first.longitude, report.latitude, report.longitude) < 200;
     });
     if (group) group.push(report);
@@ -749,10 +777,8 @@ function aggregateReports(reports: BusReport[], ownId: string | null): MapReport
       latitude: group.reduce((total, report) => total + report.latitude, 0) / group.length,
       longitude: group.reduce((total, report) => total + report.longitude, 0) / group.length,
       accuracy: accuracies.length ? Math.round(accuracies.reduce((total, value) => total + value, 0) / accuracies.length) : null,
-      vehicleLabel: counts(group.map((report) => report.vehicleLabel)),
       departureTime: counts(group.map((report) => report.departureTime)),
       occupancy: counts(group.map((report) => report.occupancy)),
-      delayMinutes: counts(group.map((report) => report.delayMinutes)),
       supportCount: group.length,
       containsOwn: group.some((report) => report.id === ownId),
     };

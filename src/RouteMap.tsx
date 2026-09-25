@@ -12,12 +12,19 @@ export type BusReport = {
   longitude: number;
   accuracy: number | null;
   departureTime: string | null;
-  vehicleLabel: string | null;
   occupancy: "low" | "medium" | "high" | null;
   delayMinutes: number | null;
+  delayBasis?: "selected-departure" | "inferred-departure" | null;
   lastSeen: string;
   ageSeconds: number;
   supportCount?: number;
+  /** Client-side: when the report was fetched, to keep its age current between refreshes. */
+  receivedAt?: number;
+  /** The position is a timetable-based estimate from an older real reading, not a live GPS fix. */
+  estimated?: boolean;
+  previousStop?: string;
+  nextStop?: string;
+  minutesToNextStop?: number | null;
 };
 
 type Props = {
@@ -38,6 +45,7 @@ export default function RouteMap({ direction, stops, reports, ghosts, expanded, 
   const reportLayersRef = useRef<L.LayerGroup | null>(null);
   const ghostLayersRef = useRef<L.LayerGroup | null>(null);
   const ghostMarkersRef = useRef(new Map<string, L.Marker>());
+  const reportMarkersRef = useRef(new Map<string, { marker: L.Marker; circle: L.Circle | null }>());
   const compactViewRef = useRef<{ center: L.LatLng; zoom: number } | null>(null);
   const wasExpandedRef = useRef(false);
   const programmaticMoveRef = useRef(false);
@@ -71,6 +79,7 @@ export default function RouteMap({ direction, stops, reports, ghosts, expanded, 
       reportLayersRef.current = null;
       ghostLayersRef.current = null;
       ghostMarkersRef.current.clear();
+      reportMarkersRef.current.clear();
     };
   }, []);
 
@@ -100,36 +109,36 @@ export default function RouteMap({ direction, stops, reports, ghosts, expanded, 
   }, [direction, stops]);
 
   useEffect(() => {
-    const map = mapRef.current;
     const layers = reportLayersRef.current;
-    if (!map || !layers) return;
-    layers.clearLayers();
-
+    if (!layers) return;
+    // Update in place (keyed by report id) so an open popup survives the periodic refresh.
+    const markers = reportMarkersRef.current;
+    const liveIds = new Set(reports.map((report) => report.id));
+    for (const [id, entry] of markers) {
+      if (!liveIds.has(id)) {
+        layers.removeLayer(entry.marker);
+        if (entry.circle) layers.removeLayer(entry.circle);
+        markers.delete(id);
+      }
+    }
     for (const report of reports) {
       const point = L.latLng(report.latitude, report.longitude);
-      const age = report.ageSeconds < 60 ? "ahora" : `hace ${Math.floor(report.ageSeconds / 60)} min`;
-      const baseTitle = report.vehicleLabel ? `Bus ${escapeHtml(report.vehicleLabel)}` : "Bus compartido";
-      const title = report.supportCount && report.supportCount > 1 ? `${baseTitle} · ${report.supportCount} avisos` : baseTitle;
-      const status = getReportStatus(report.delayMinutes);
-      const markerLabel = escapeHtml(status.markerLabel);
-      const markerDescription = escapeHtml(`${baseTitle}: ${status.label}`);
-      const icon = L.divIcon({
-        className: "bus-map-icon-wrap",
-        html: `<span class="bus-map-marker" role="img" aria-label="${markerDescription}" title="${markerDescription}">
-          <span class="bus-map-status bus-map-status--${status.kind}">${markerLabel}</span>
-          <span class="bus-map-pin bus-map-pin--${status.kind}" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 16V8.5A2.5 2.5 0 0 1 7.5 6h9A2.5 2.5 0 0 1 19 8.5V16"/><path d="M5 11h14M8 16v2m8-2v2M7.5 18h9A2.5 2.5 0 0 0 19 15.5V13H5v2.5A2.5 2.5 0 0 0 7.5 18Z"/><path d="M8 8.5h.01M16 8.5h.01"/></svg>
-          </span>
-        </span>`,
-        iconSize: [128, 74],
-        iconAnchor: [64, 72],
-      });
-      if (report.accuracy && report.accuracy < 600) {
-        L.circle(point, { radius: report.accuracy, color: "#71817e", weight: 1, fillColor: "#71817e", fillOpacity: 0.07 }).addTo(layers);
+      const icon = reportIcon(report);
+      const popup = reportPopupHtml(report);
+      const showAccuracy = !report.estimated && report.accuracy !== null && report.accuracy > 0 && report.accuracy < 600;
+      const existing = markers.get(report.id);
+      if (existing) {
+        existing.marker.setLatLng(point).setIcon(icon).setPopupContent(popup);
+        if (existing.circle) {
+          layers.removeLayer(existing.circle);
+          existing.circle = null;
+        }
+        if (showAccuracy) existing.circle = accuracyCircle(point, report.accuracy as number).addTo(layers);
+        continue;
       }
-      L.marker(point, { icon, zIndexOffset: 500 })
-        .bindPopup(`<strong>${title}</strong><br><span class="popup-status popup-status--${status.kind}">${escapeHtml(status.label)}</span><br>${age}${report.departureTime ? ` · salida ${escapeHtml(report.departureTime)}` : ""}<br><small>Dato de viajeros, no oficial.</small>`)
-        .addTo(layers);
+      const circle = showAccuracy ? accuracyCircle(point, report.accuracy as number).addTo(layers) : null;
+      const marker = L.marker(point, { icon, zIndexOffset: 500 }).bindPopup(popup).addTo(layers);
+      markers.set(report.id, { marker, circle });
     }
   }, [reports]);
 
@@ -193,12 +202,50 @@ export default function RouteMap({ direction, stops, reports, ghosts, expanded, 
   return <div className="route-map" ref={elementRef} role="img" aria-label="Mapa interactivo de la ruta y las posiciones compartidas entre Tarragona y Vilanova i la Geltrú" />;
 }
 
+function reportIcon(report: BusReport) {
+  const baseTitle = "Bus compartido";
+  const status = getReportStatus(report.delayMinutes, report.delayBasis);
+  const markerLabel = escapeHtml(report.estimated ? `Estimado · ${status.markerLabel}` : status.markerLabel);
+  const markerDescription = escapeHtml(`${baseTitle}${report.estimated ? " (posición estimada)" : ""}: ${status.label}`);
+  return L.divIcon({
+    className: "bus-map-icon-wrap",
+    html: `<span class="bus-map-marker${report.estimated ? " is-estimated" : ""}" role="img" aria-label="${markerDescription}" title="${markerDescription}">
+      <span class="bus-map-status bus-map-status--${status.kind}">${markerLabel}</span>
+      <span class="bus-map-pin bus-map-pin--${status.kind}" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 16V8.5A2.5 2.5 0 0 1 7.5 6h9A2.5 2.5 0 0 1 19 8.5V16"/><path d="M5 11h14M8 16v2m8-2v2M7.5 18h9A2.5 2.5 0 0 0 19 15.5V13H5v2.5A2.5 2.5 0 0 0 7.5 18Z"/><path d="M8 8.5h.01M16 8.5h.01"/></svg>
+      </span>
+    </span>`,
+    iconSize: [128, 74],
+    iconAnchor: [64, 72],
+  });
+}
+
+function reportPopupHtml(report: BusReport) {
+  const baseTitle = "Bus compartido";
+  const title = report.supportCount && report.supportCount > 1 ? `${baseTitle} · ${report.supportCount} avisos` : baseTitle;
+  const status = getReportStatus(report.delayMinutes, report.delayBasis);
+  const minutes = Math.floor(report.ageSeconds / 60);
+  const departure = report.departureTime ? ` · salida ${escapeHtml(report.departureTime)}` : "";
+  const nextStop = report.nextStop ? `<br>Próxima parada: ${escapeHtml(report.nextStop)}${report.minutesToNextStop !== null && report.minutesToNextStop !== undefined ? ` · ~${report.minutesToNextStop} min` : ""}.` : "";
+  if (report.estimated) {
+    const between = report.previousStop && report.nextStop ? `<br>Ahora estaría entre ${escapeHtml(report.previousStop)} y ${escapeHtml(report.nextStop)}.` : "";
+    return `<strong>${title} · posición estimada</strong><br><span class="popup-status popup-status--${status.kind}">${escapeHtml(status.label)}</span>${between}${nextStop}<br>Última posición real hace ${minutes} min${departure}.<br><small>Posición y retraso estimados con horario publicado; no son datos oficiales.</small>`;
+  }
+  const age = report.ageSeconds < 60 ? "ahora" : `hace ${minutes} min`;
+  return `<strong>${title}</strong><br><span class="popup-status popup-status--${status.kind}">${escapeHtml(status.label)}</span>${nextStop}<br>${age}${departure}<br><small>Retraso estimado comparando GPS y horario publicado; no es oficial.</small>`;
+}
+
+function accuracyCircle(point: L.LatLng, radius: number) {
+  return L.circle(point, { radius, color: "#71817e", weight: 1, fillColor: "#71817e", fillOpacity: 0.07 });
+}
+
 function ghostIcon(ghost: GhostBus) {
-  const description = escapeHtml(`Bus fantasma sin verificar, salida ${ghost.departureTime}`);
+  const waiting = ghost.departsInMinutes !== null;
+  const description = escapeHtml(`Bus fantasma sin verificar, ${waiting ? `saldría a las ${ghost.departureTime}` : `salida ${ghost.departureTime}`}`);
   return L.divIcon({
     className: "bus-map-icon-wrap",
     html: `<span class="bus-map-marker" role="img" aria-label="${description}" title="${description}">
-      <span class="bus-map-status bus-map-status--ghost">Sin verificar</span>
+      <span class="bus-map-status bus-map-status--ghost">${waiting ? `Sin verificar · ${escapeHtml(ghost.departureTime)}` : "Sin verificar"}</span>
       <span class="bus-map-pin bus-map-pin--ghost" aria-hidden="true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 10h.01"/><path d="M15 10h.01"/><path d="M12 2a8 8 0 0 0-8 8v12l3-3 2.5 2.5L12 19l2.5 2.5L17 19l3 3V10a8 8 0 0 0-8-8z"/></svg>
       </span>
@@ -209,7 +256,10 @@ function ghostIcon(ghost: GhostBus) {
 }
 
 function ghostPopupHtml(ghost: GhostBus) {
-  return `<strong>Bus fantasma · salida ${escapeHtml(ghost.departureTime)}</strong><br><span class="popup-status popup-status--ghost">SIN VERIFICAR</span><br>Según el horario, ahora estaría entre ${escapeHtml(ghost.previousStop)} y ${escapeHtml(ghost.nextStop)}.<br><small>Es solo una estimación del horario: nadie ha confirmado que este bus exista ni dónde está.</small>`;
+  const where = ghost.departsInMinutes !== null
+    ? `Según el horario, saldría de ${escapeHtml(ghost.previousStop)} a las ${escapeHtml(ghost.departureTime)} (en ${ghost.departsInMinutes} min).`
+    : `Según el horario, ahora estaría entre ${escapeHtml(ghost.previousStop)} y ${escapeHtml(ghost.nextStop)}.`;
+  return `<strong>Bus fantasma · salida ${escapeHtml(ghost.departureTime)}</strong><br><span class="popup-status popup-status--ghost">SIN VERIFICAR</span><br>${where}<br><small>Es solo una estimación del horario: nadie ha confirmado que este bus exista ni dónde está.</small>`;
 }
 
 function escapeHtml(value: string) {

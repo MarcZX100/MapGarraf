@@ -15,6 +15,8 @@ export type GhostBus = {
   longitude: number;
   previousStop: string;
   nextStop: string;
+  /** Minutes until the scheduled departure while the bus is still waiting at the first stop; null once it is on its way. */
+  departsInMinutes: number | null;
 };
 
 type RealPosition = {
@@ -22,6 +24,15 @@ type RealPosition = {
   longitude: number;
   departureTime: string | null;
   delayMinutes: number | null;
+  /** How long ago the position was actually read (0 for a position that is valid right now). */
+  ageSeconds: number;
+};
+
+export type EstimatedPosition = {
+  latitude: number;
+  longitude: number;
+  previousStop: string;
+  nextStop: string;
 };
 
 type RouteModel = {
@@ -33,10 +44,20 @@ type RouteModel = {
   departures: { label: string; minutes: number }[];
 };
 
+export type RouteEstimate = {
+  delayMinutes: number | null;
+  delayBasis: "selected-departure" | "inferred-departure" | null;
+  nextStop: string | null;
+  minutesToNextStop: number | null;
+};
+
 const TIME_ZONE = "Europe/Madrid";
 const MAX_ROUTE_DISTANCE_M = 1500;
+const MAX_TIMING_ROUTE_DISTANCE_M = 250;
 const MAX_DELAY_MISMATCH_MIN = 15;
 const STOP_SNAP_M = 60;
+/** How long before its scheduled departure a service is shown waiting at the first stop. */
+const BOARDING_WINDOW_MIN = 10;
 
 const models = new Map<Direction, RouteModel>();
 
@@ -156,27 +177,108 @@ export function getGhostBuses(direction: Direction, now: Date): GhostBus[] {
   const ghosts: GhostBus[] = [];
   for (const departure of model.departures) {
     const elapsed = clock.minutes - departure.minutes;
-    if (elapsed < 0 || elapsed > lastOffset) continue;
-    const segment = segmentAt(model, elapsed);
-    if (!segment) continue;
-    const along = model.stopAlong[segment.index] + (model.stopAlong[segment.index + 1] - model.stopAlong[segment.index]) * segment.fraction;
-    const [latitude, longitude] = pointAtDistance(model, along);
+    if (elapsed < -BOARDING_WINDOW_MIN || elapsed > lastOffset) continue;
+    const position = positionAtScheduleMinute(model, Math.max(0, elapsed));
+    if (!position) continue;
     ghosts.push({
       id: `ghost-${direction}-${departure.label}`,
       direction,
       departureTime: departure.label,
       arrivalTime: toClock(departure.minutes + lastOffset),
-      latitude,
-      longitude,
-      previousStop: model.stopNames[segment.index],
-      nextStop: model.stopNames[segment.index + 1],
+      ...position,
+      departsInMinutes: elapsed < 0 ? Math.ceil(-elapsed) : null,
     });
   }
   return ghosts;
 }
 
+/** Where a bus running exactly to the timetable is `minutes` after leaving the first stop. */
+function positionAtScheduleMinute(model: RouteModel, minutes: number): EstimatedPosition | null {
+  const segment = segmentAt(model, minutes);
+  if (!segment) return null;
+  const along = model.stopAlong[segment.index] + (model.stopAlong[segment.index + 1] - model.stopAlong[segment.index]) * segment.fraction;
+  const [latitude, longitude] = pointAtDistance(model, along);
+  return { latitude, longitude, previousStop: model.stopNames[segment.index], nextStop: model.stopNames[segment.index + 1] };
+}
+
+/**
+ * Dead reckoning for a real position that is no longer fresh: the bus was at this
+ * spot `ageSeconds` ago, so it is now where the timetable puts it that much later,
+ * which keeps whatever delay it already had. Null if the position is off the route
+ * (nothing sensible to estimate) or the bus should have arrived by now.
+ */
+export function estimateCurrentPosition(direction: Direction, report: { latitude: number; longitude: number; ageSeconds: number }): EstimatedPosition | null {
+  const model = buildModel(direction);
+  const scheduled = scheduledMinuteAt(model, report.latitude, report.longitude);
+  if (scheduled === null) return null;
+  return positionAtScheduleMinute(model, scheduled + report.ageSeconds / 60);
+}
+
+/**
+ * Estimates timetable deviation and the next stop from a GPS fix. A selected
+ * departure is the strongest basis; otherwise the closest plausible trip is
+ * inferred and callers should make that uncertainty clear.
+ */
+export function estimateRouteStatus(
+  direction: Direction,
+  report: { latitude: number; longitude: number; ageSeconds: number; departureTime?: string | null },
+  now: Date,
+  displayedPosition: { latitude: number; longitude: number } = report,
+): RouteEstimate {
+  const model = buildModel(direction);
+  const currentProgress = routeProgressAt(model, displayedPosition.latitude, displayedPosition.longitude, MAX_TIMING_ROUTE_DISTANCE_M);
+  const observedProgress = routeProgressAt(model, report.latitude, report.longitude, MAX_TIMING_ROUTE_DISTANCE_M);
+  const nextStopIndex = currentProgress
+    ? model.offsets.findIndex((offset) => offset > currentProgress.elapsedMinutes + 0.5)
+    : -1;
+  const nextStop = nextStopIndex >= 0 ? model.stopNames[nextStopIndex] : null;
+  const minutesToNextStop = nextStopIndex >= 0 && currentProgress
+    ? Math.max(0, Math.round(model.offsets[nextStopIndex] - currentProgress.elapsedMinutes))
+    : null;
+
+  if (!observedProgress) return { delayMinutes: null, delayBasis: null, nextStop, minutesToNextStop };
+  const clock = madridClock(now);
+  if (!clock.isWeekday) return { delayMinutes: null, delayBasis: null, nextStop, minutesToNextStop };
+
+  // For an old fix, compare the bus with the timetable at the time the fix was
+  // actually recorded, not with the clock time when this page refreshed.
+  const observedClock = clock.minutes - Math.max(0, report.ageSeconds) / 60;
+  const routeDuration = model.offsets[model.offsets.length - 1];
+  if (report.departureTime) {
+    const departure = model.departures.find((candidate) => candidate.label === report.departureTime);
+    if (!departure) return { delayMinutes: null, delayBasis: null, nextStop, minutesToNextStop };
+    const elapsed = observedClock - departure.minutes;
+    if (elapsed < 0 || elapsed > routeDuration + 120) return { delayMinutes: null, delayBasis: null, nextStop, minutesToNextStop };
+    return {
+      delayMinutes: Math.round(elapsed - observedProgress.elapsedMinutes),
+      delayBasis: "selected-departure",
+      nextStop,
+      minutesToNextStop,
+    };
+  }
+
+  const candidates = model.departures.flatMap((departure) => {
+    const elapsed = observedClock - departure.minutes;
+    if (elapsed < 0 || elapsed > routeDuration + 90) return [];
+    const delay = elapsed - observedProgress.elapsedMinutes;
+    return delay < -20 || delay > 90 ? [] : [{ delay, distanceFromSchedule: Math.abs(delay) }];
+  }).sort((a, b) => a.distanceFromSchedule - b.distanceFromSchedule);
+  const best = candidates[0];
+  if (!best) return { delayMinutes: null, delayBasis: null, nextStop, minutesToNextStop };
+  return {
+    delayMinutes: Math.round(best.delay),
+    delayBasis: "inferred-departure",
+    nextStop,
+    minutesToNextStop,
+  };
+}
+
 /** Schedule minute (since departure) at which a bus would be at this position, or null if it is off the route. */
 function scheduledMinuteAt(model: RouteModel, latitude: number, longitude: number) {
+  return routeProgressAt(model, latitude, longitude, MAX_ROUTE_DISTANCE_M)?.elapsedMinutes ?? null;
+}
+
+function routeProgressAt(model: RouteModel, latitude: number, longitude: number, maxDistance: number) {
   let best = 0;
   let bestDistance = Infinity;
   for (let i = 0; i < model.points.length; i += 1) {
@@ -186,15 +288,21 @@ function scheduledMinuteAt(model: RouteModel, latitude: number, longitude: numbe
       bestDistance = distance;
     }
   }
-  if (bestDistance > MAX_ROUTE_DISTANCE_M) return null;
+  if (bestDistance > maxDistance) return null;
   const along = model.cumulative[best];
   for (let i = 0; i < model.stopAlong.length - 1; i += 1) {
     if (along >= model.stopAlong[i] && along <= model.stopAlong[i + 1]) {
       const span = model.stopAlong[i + 1] - model.stopAlong[i] || 1;
-      return model.offsets[i] + ((along - model.stopAlong[i]) / span) * (model.offsets[i + 1] - model.offsets[i]);
+      return {
+        elapsedMinutes: model.offsets[i] + ((along - model.stopAlong[i]) / span) * (model.offsets[i + 1] - model.offsets[i]),
+        distanceFromRoute: bestDistance,
+      };
     }
   }
-  return along < model.stopAlong[0] ? model.offsets[0] : model.offsets[model.offsets.length - 1];
+  return {
+    elapsedMinutes: along < model.stopAlong[0] ? model.offsets[0] : model.offsets[model.offsets.length - 1],
+    distanceFromRoute: bestDistance,
+  };
 }
 
 /**
@@ -223,7 +331,7 @@ export function unclaimedGhosts(ghosts: GhostBus[], reports: RealPosition[], dir
     let best: { label: string; mismatch: number } | null = null;
     for (const departure of model.departures) {
       if (claimed.has(departure.label)) continue;
-      const delay = clock.minutes - departure.minutes - scheduled;
+      const delay = clock.minutes - report.ageSeconds / 60 - departure.minutes - scheduled;
       const mismatch = Math.abs(delay - expectedDelay);
       if (mismatch <= MAX_DELAY_MISMATCH_MIN && (!best || mismatch < best.mismatch)) best = { label: departure.label, mismatch };
     }

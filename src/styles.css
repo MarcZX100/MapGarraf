@@ -79,6 +79,7 @@ h1 span { color: var(--teal); }
 .rotate { transform: rotate(180deg); }
 .extra-options { margin-top: 15px; padding-top: 14px; border-top: 1px solid rgb(255 255 255 / 16%); display: grid; grid-template-columns: 1fr 1fr; gap: 13px 10px; }
 .extra-options label { min-width: 0; color: #d4e5df; font-size: 10px; font-weight: 600; }
+.extra-options > label:first-child { grid-column: 1/-1; }
 .extra-options input, .extra-options select { width: 100%; height: 40px; margin-top: 5px; padding: 0 9px; border: 1px solid rgb(255 255 255 / 20%); border-radius: 9px; outline: none; background: rgb(255 255 255 / 9%); color: #fff; font-size: 12px; color-scheme: dark; }
 .extra-options input::placeholder { color: #a5bcb5; }
 .extra-options fieldset { grid-column: 1/-1; min-width: 0; padding: 0; border: 0; margin: 0; }
@@ -175,6 +176,10 @@ h1 span { color: var(--teal); }
 .mine-pill { padding: 3px 5px; border-radius: 4px; background: #e6f3ed; color: #32806b; font-size: 7px; font-weight: 700; letter-spacing: .4px; }
 .report-meta { margin-top: 5px; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; color: #77837e; font-size: 9px; }
 .report-meta span { display: inline-flex; align-items: center; gap: 4px; }
+.report-next-stop { margin-top: 8px; color: #47675e; display: flex; flex-wrap: wrap; align-items: center; gap: 5px; font-size: 10px; }
+.report-next-stop svg { color: #418b79; }
+.report-next-stop strong { color: var(--ink); }
+.report-eta { margin-left: auto; padding: 4px 7px; border-radius: 6px; background: #edf5ef; color: #417365; font-size: 9px; font-weight: 700; white-space: nowrap; }
 .report-timing { margin-top: 8px; padding: 7px 8px; border: 1px solid transparent; border-radius: 9px; display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }
 .report-timing strong { font-size: 10px; }
 .report-timing-dot { width: 8px; height: 8px; flex: 0 0 auto; border-radius: 50%; background: currentColor; }
@@ -275,6 +280,9 @@ h1 span { color: var(--teal); }
 [data-theme="dark"] .report-timing--delayed { border-color: #56431a; background: #2b2210; color: #e8bf6a; }
 [data-theme="dark"] .report-timing--late { border-color: #5c2b26; background: #2e1614; color: #f0918a; }
 [data-theme="dark"] .report-timing--unknown { border-color: #2c3a36; background: #17211f; color: #9db0aa; }
+[data-theme="dark"] .report-next-stop { color: #b5c9c2; }
+[data-theme="dark"] .report-next-stop svg { color: #78b9a8; }
+[data-theme="dark"] .report-eta { background: #203a32; color: #a5d4c5; }
 [data-theme="dark"] .schedule-stop-select select { border-color: #2b3d38; background: #1a2926; color: #cfe0db; }
 [data-theme="dark"] .departure-chip { border-color: #2b3d38; background: #1a2926; color: #b6cbc5; }
 [data-theme="dark"] .departure-chip:hover { border-color: #2b7f74; background: #1f3a34; }
@@ -332,6 +340,18 @@ h1 span { color: var(--teal); }
 [data-theme="dark"] .ghost-warning { background: #221e3d; color: #b3abdc; }
 [data-theme="dark"] .ghost-claim { border-color: #4a4180; background: #221e3d; color: #cfc8f5; }
 [data-theme="dark"] .ghost-claim:hover { background: #2a2548; }
+
+/* Estimated real buses: last real reading advanced along the timetable (not a live GPS fix). */
+.bus-map-marker.is-estimated .bus-map-pin { border-style: dotted; opacity: .8; }
+.bus-map-marker.is-estimated .bus-map-status { border-style: dashed; }
+.legend-estimated { width: 15px; height: 15px; margin-left: 4px; border: 2px dotted #27875d; border-radius: 6px; background: #edf8f1; }
+[data-theme="dark"] .legend-estimated { border-color: #4fb98a; background: #12291f; }
+.report-card--estimated { border-style: dashed; }
+.estimate-pill { padding: 3px 5px; border: 1px dashed #91aaa2; border-radius: 4px; color: #4d6d64; font-size: 7px; font-weight: 800; letter-spacing: .5px; }
+.estimate-note { margin: 5px 0 0; color: #66766f; font-size: 9px; line-height: 1.45; }
+[data-theme="dark"] .estimate-pill { border-color: #4f6f66; color: #9fc4b9; }
+[data-theme="dark"] .estimate-note { color: #93a5a0; }
+[data-theme="dark"] .report-card--estimated { border-color: #34473f; }
 
 @media (min-width: 760px) {
   .topbar { height: 76px; }

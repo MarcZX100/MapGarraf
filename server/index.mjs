@@ -13,6 +13,9 @@ const root = path.resolve(here, "..");
 const port = Number(process.env.PORT || 4174);
 const dbPath = path.resolve(root, process.env.DATABASE_PATH || "./data/busgarraf.sqlite");
 const liveForMs = 3 * 60 * 1000;
+// After liveForMs without a GPS reading the last exact position is still served, for this long,
+// so clients can estimate where the bus is now from the timetable. "Dejar de compartir" deletes it at once.
+const estimateForMs = 20 * 60 * 1000;
 const directionSchema = z.enum(["to-tarragona", "to-vilanova"]);
 const occupancySchema = z.enum(["low", "medium", "high"]).nullable().optional();
 
@@ -81,9 +84,7 @@ const reportInput = z.object({
   longitude: z.number().finite().min(1.18).max(1.8),
   accuracy: z.number().finite().min(0).max(100_000).optional(),
   departureTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).nullable().optional(),
-  vehicleLabel: z.string().trim().max(30).nullable().optional(),
   occupancy: occupancySchema,
-  delayMinutes: z.number().int().min(-30).max(240).nullable().optional(),
 });
 
 function publicReport(row, now = Date.now()) {
@@ -95,9 +96,9 @@ function publicReport(row, now = Date.now()) {
     longitude: row.longitude,
     accuracy: row.accuracy,
     departureTime: row.departure_time,
-    vehicleLabel: row.vehicle_label,
+    // Kept as null for API compatibility; punctuality is calculated by clients.
     occupancy: row.occupancy,
-    delayMinutes: row.delay_minutes,
+    delayMinutes: null,
     lastSeen: new Date(row.updated_at).toISOString(),
     ageSeconds,
   };
@@ -137,8 +138,8 @@ app.get("/api/vehicles", (req, res) => {
   db.prepare("DELETE FROM bus_reports WHERE updated_at < ?").run(now - 24 * 60 * 60 * 1000);
   const rows = db
     .prepare("SELECT * FROM bus_reports WHERE direction = ? AND updated_at >= ? ORDER BY updated_at DESC LIMIT 60")
-    .all(direction.data, now - liveForMs);
-  res.json({ reports: rows.map((row) => publicReport(row, now)), liveForSeconds: liveForMs / 1000 });
+    .all(direction.data, now - estimateForMs);
+  res.json({ reports: rows.map((row) => publicReport(row, now)), liveForSeconds: liveForMs / 1000, estimateForSeconds: estimateForMs / 1000 });
 });
 
 app.post("/api/vehicles", writeLimiter, (req, res) => {
@@ -160,9 +161,9 @@ app.post("/api/vehicles", writeLimiter, (req, res) => {
     longitude: input.longitude,
     accuracy: input.accuracy ?? null,
     departure_time: input.departureTime ?? null,
-    vehicle_label: input.vehicleLabel || null,
+    vehicle_label: null,
     occupancy: input.occupancy ?? null,
-    delay_minutes: input.delayMinutes ?? null,
+    delay_minutes: null,
     created_at: now,
     updated_at: now,
   });
@@ -185,9 +186,9 @@ app.patch("/api/vehicles/:id", writeLimiter, (req, res) => {
     longitude: input.longitude ?? report.longitude,
     accuracy: input.accuracy ?? report.accuracy,
     departure_time: input.departureTime === undefined ? report.departure_time : input.departureTime,
-    vehicle_label: input.vehicleLabel === undefined ? report.vehicle_label : input.vehicleLabel,
+    vehicle_label: null,
     occupancy: input.occupancy === undefined ? report.occupancy : input.occupancy,
-    delay_minutes: input.delayMinutes === undefined ? report.delay_minutes : input.delayMinutes,
+    delay_minutes: null,
     updated_at: input.latitude === undefined ? report.updated_at : now,
     id: report.id,
   };

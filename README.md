@@ -1,6 +1,6 @@
 # MapGarraf · BusGarraf Tarragona ↔ Vilanova
 
-PWA mobile-first e instalable desde el navegador para viajeros de la línea Vilanova i la Geltrú–Tarragona. Permite compartir voluntariamente el GPS del móvil, el sentido del viaje y datos opcionales del servicio (salida, número de bus, retraso y ocupación); el resto de viajeros ve señales recientes sobre un mapa.
+PWA mobile-first e instalable desde el navegador para viajeros de la línea Vilanova i la Geltrú–Tarragona. Permite compartir voluntariamente el GPS del móvil, el sentido del viaje y datos opcionales útiles (salida y ocupación); el resto de viajeros ve señales recientes sobre un mapa, la próxima parada y una estimación automática de puntualidad.
 
 Es un proyecto comunitario independiente, no un producto de BusGarraf. No recibe telemetría del operador: cada marcador significa que un viajero ha compartido el GPS de su dispositivo, no que BusGarraf haya confirmado la posición o la hora de llegada. La app no solicita la ubicación hasta pulsar **Compartir este bus**.
 
@@ -8,9 +8,9 @@ Es un proyecto comunitario independiente, no un producto de BusGarraf. No recibe
 
 - Interfaz React/Vite adaptada a móvil, manifiesto PWA, iconos y caché del shell de la app.
 - Mapa Leaflet con las 16 paradas mostradas individualmente, coordenadas por sentido y un trazado por calles calculado sobre OpenStreetMap con OSRM.
-- Selector de sentido, señales comunitarias recientes, compartir/detener con un toque, y opciones de bus, salida, ocupación y retraso.
+- Selector de sentido, señales comunitarias recientes, compartir/detener con un toque y opciones de salida y ocupación. La app estima el retraso comparando el GPS con el horario; se puede indicar la salida para mejorar la estimación, o se infiere la más probable. El resultado no es oficial y puede ser incierto si no se conoce el servicio exacto.
 - API Express con validación Zod, cabeceras Helmet, límites de uso, token aleatorio por señal, SQLite persistente y caducidad automática.
-- Las señales dejan de aparecer tras 3 minutos sin una lectura GPS reciente y se borran de la base de datos en 24 horas. Mientras están activas, las coordenadas exactas son públicas. No se pide cuenta, nombre ni identificador del dispositivo.
+- Una señal se considera en vivo durante 3 minutos tras su última lectura GPS. Pasado ese tiempo, el mapa deja de mostrar el punto exacto y lo sustituye por una posición estimada: la última lectura real avanzada a lo largo del horario, conservando el retraso que llevaba (hasta 20 minutos; después el bus vuelve a ser un fantasma sin verificar). Para que el cliente pueda estimar, el servidor sigue sirviendo la última posición exacta hasta 20 minutos, así que **las coordenadas exactas son públicas hasta 20 minutos tras la última lectura**, salvo que el viajero pulse «Dejar de compartir», que la borra al instante. Todo se borra de la base de datos en 24 horas. No se pide cuenta, nombre ni identificador del dispositivo.
 - Buses fantasma: de lunes a viernes, cada servicio del horario en curso se dibuja donde debería estar según el horario publicado, con aviso «sin verificar». No son datos reales ni tienen por qué existir. Un fantasma se sustituye por la posición real cuando un viajero comparte ese bus (se asocia por la hora de salida indicada o, si no la hay, por posición y retraso). Se calculan en el navegador con `src/ghostBuses.ts`; el servidor no interviene. Se pueden ocultar desde el aviso sobre el mapa.
 - Imagen Docker y volumen SQLite persistente para desplegar una sola instancia.
 
@@ -67,9 +67,9 @@ Antes de un lanzamiento público, añade un contacto visible, configura copias d
 ## API
 
 - `GET /health` — disponibilidad del proceso y la base de datos.
-- `GET /api/vehicles?direction=to-tarragona|to-vilanova` — señales comunitarias activas.
+- `GET /api/vehicles?direction=to-tarragona|to-vilanova` — señales comunitarias de los últimos 20 minutos (`ageSeconds` indica su antigüedad; las de más de 3 minutos son solo para estimar).
 - `POST /api/vehicles` — crea una señal y devuelve un `shareToken` de un solo uso.
 - `PATCH /api/vehicles/:id` — actualiza una señal mediante `x-share-token`.
 - `DELETE /api/vehicles/:id` — deja de compartir mediante `x-share-token`.
 
-Los endpoints de lectura nunca devuelven el token. El cliente lo conserva solo en memoria y SQLite guarda su hash. Si se cierra o recarga la app, ya no se puede detener manualmente esa sesión; la señal deja de mostrarse tras 3 minutos sin GPS y se elimina del servidor en un máximo de 24 horas. Desde la pantalla activa se puede retirar inmediatamente.
+Los endpoints de lectura nunca devuelven el token. El cliente lo conserva solo en memoria y SQLite guarda su hash. Si se cierra o recarga la app, ya no se puede detener manualmente esa sesión; la señal pasa a mostrarse como estimación a los 3 minutos sin GPS, su última posición exacta sigue disponible por la API hasta 20 minutos y se elimina del servidor en un máximo de 24 horas. Desde la pantalla activa se puede retirar inmediatamente.
