@@ -1,18 +1,18 @@
 services:
-  ruta-viva:
+  mapgarraf:
     build:
       context: .
       args:
         VITE_TILE_URL: ${VITE_TILE_URL:-https://tile.openstreetmap.org/{z}/{x}/{y}.png}
     restart: unless-stopped
     ports:
-      - "127.0.0.1:4175:4173"
+      - "127.0.0.1:${HOST_PORT:-4175}:4173"
     environment:
       PORT: 4173
       DATABASE_PATH: /app/data/busgarraf.sqlite
       TRUST_PROXY: ${TRUST_PROXY:-0}
     volumes:
-      - ruta-viva-data:/app/data
+      - mapgarraf-data:/app/data
     healthcheck:
       test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:4173/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
@@ -21,4 +21,4 @@ services:
       start_period: 10s
 
 volumes:
-  ruta-viva-data:
+  mapgarraf-data:

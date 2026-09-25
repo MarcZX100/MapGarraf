@@ -10,6 +10,7 @@ export default defineConfig({
       srcDir: "public",
       filename: "sw.js",
       injectRegister: null,
+      manifest: false,
       injectManifest: {
         globPatterns: ["**/*.{js,css,html,svg,webmanifest}"],
         globIgnores: ["sw.js"],

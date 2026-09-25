@@ -341,9 +341,9 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <a className="brand" href="#inicio" aria-label="Ruta viva, inicio">
+        <a className="brand" href="#inicio" aria-label="MapGarraf, inicio">
           <span className="brand-mark"><BusFront size={19} strokeWidth={2.4} /></span>
-          <span><strong>ruta viva</strong><small>BUSGARRAF · COMUNIDAD</small></span>
+          <span><strong>MapGarraf</strong><small>BUSGARRAF · COMUNIDAD</small></span>
         </a>
         <div className="topbar-actions">
           <button className="icon-button install-button" onClick={() => void installApp()} aria-label="Instalar aplicación"><Download size={19} /></button>
@@ -552,7 +552,7 @@ export default function App() {
         <section className="install-dialog" role="dialog" aria-modal="true" aria-labelledby="install-title" onClick={(event) => event.stopPropagation()}>
           <button className="dialog-close" onClick={() => setShowInstallHelp(false)} aria-label="Cerrar"><X size={18} /></button>
           <span className="install-dialog-icon"><Download size={22} /></span>
-          <h2 id="install-title">Lleva Ruta viva en el móvil</h2>
+          <h2 id="install-title">Lleva MapGarraf en el móvil</h2>
           {/iphone|ipad|ipod/i.test(navigator.userAgent) ? (
             <p>En Safari, toca <strong>Compartir</strong> y después <strong>Añadir a pantalla de inicio</strong>. Se abrirá como una app.</p>
           ) : (

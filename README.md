@@ -1,4 +1,4 @@
-# Ruta viva · BusGarraf Tarragona ↔ Vilanova
+# MapGarraf · BusGarraf Tarragona ↔ Vilanova
 
 PWA mobile-first e instalable desde el navegador para viajeros de la línea Vilanova i la Geltrú–Tarragona. Permite compartir voluntariamente el GPS del móvil, el sentido del viaje y datos opcionales del servicio (salida, número de bus, retraso y ocupación); el resto de viajeros ve señales recientes sobre un mapa.
 
@@ -59,7 +59,7 @@ La API y los archivos compilados se sirven juntos en el puerto 4174 por defecto.
 docker compose up -d --build
 ```
 
-El servicio queda en `127.0.0.1:4175` del host y guarda SQLite en el volumen `ruta-viva-data`. Antes de exponerlo a viajeros, colócalo detrás de un proxy con TLS: HTTPS es necesario para geolocalización e instalación PWA. Si hay exactamente un proxy de confianza delante de Express, configura `TRUST_PROXY=1`. No escales esta configuración SQLite a varias instancias; antes migra a una base de datos transaccional compartida y a infraestructura compartida para sesiones/límites.
+El servicio queda en `127.0.0.1:${HOST_PORT:-4175}` del host y guarda SQLite en el volumen `mapgarraf-data`. Antes de exponerlo a viajeros, colócalo detrás de un proxy con TLS: HTTPS es necesario para geolocalización e instalación PWA. Si hay exactamente un proxy de confianza delante de Express, configura `TRUST_PROXY=1`. No escales esta configuración SQLite a varias instancias; antes migra a una base de datos transaccional compartida y a infraestructura compartida para sesiones/límites.
 
 Antes de un lanzamiento público, añade un contacto visible, configura copias de seguridad y monitorización, revisa el aviso de privacidad de ubicación con quien opere el servicio y confirma el plazo de conservación. Las teselas públicas de OpenStreetMap son comunitarias, de mejor esfuerzo y sin SLA; la app respeta la caché del navegador y no descarga teselas por adelantado ni las guarda offline. Cambia `VITE_TILE_URL` durante la compilación para usar un proveedor contratado o teselas propias. Si el proveedor requiere otro origen o protocolo, revisa la CSP.
 
