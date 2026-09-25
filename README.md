@@ -11,6 +11,7 @@ Es un proyecto comunitario independiente, no un producto de BusGarraf. No recibe
 - Selector de sentido, señales comunitarias recientes, compartir/detener con un toque, y opciones de bus, salida, ocupación y retraso.
 - API Express con validación Zod, cabeceras Helmet, límites de uso, token aleatorio por señal, SQLite persistente y caducidad automática.
 - Las señales dejan de aparecer tras 3 minutos sin una lectura GPS reciente y se borran de la base de datos en 24 horas. Mientras están activas, las coordenadas exactas son públicas. No se pide cuenta, nombre ni identificador del dispositivo.
+- Buses fantasma: de lunes a viernes, cada servicio del horario en curso se dibuja donde debería estar según el horario publicado, con aviso «sin verificar». No son datos reales ni tienen por qué existir. Un fantasma se sustituye por la posición real cuando un viajero comparte ese bus (se asocia por la hora de salida indicada o, si no la hay, por posición y retraso). Se calculan en el navegador con `src/ghostBuses.ts`; el servidor no interviene. Se pueden ocultar desde el aviso sobre el mapa.
 - Imagen Docker y volumen SQLite persistente para desplegar una sola instancia.
 
 ## Horarios y fuentes

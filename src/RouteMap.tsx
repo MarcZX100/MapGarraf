@@ -1,3 +1,4 @@
+import type { GhostBus } from "./ghostBuses";
 import { useEffect, useRef } from "react";
 import L from "leaflet";
 import { type Direction, type RouteStop } from "./data";
@@ -23,16 +24,18 @@ type Props = {
   direction: Direction;
   stops: RouteStop[];
   reports: BusReport[];
+  ghosts: GhostBus[];
   expanded: boolean;
   followBus: boolean;
   followReportId: string | null;
 };
 
-export default function RouteMap({ direction, stops, reports, expanded, followBus, followReportId }: Props) {
+export default function RouteMap({ direction, stops, reports, ghosts, expanded, followBus, followReportId }: Props) {
   const elementRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const routeLayersRef = useRef<L.LayerGroup | null>(null);
   const reportLayersRef = useRef<L.LayerGroup | null>(null);
+  const ghostLayersRef = useRef<L.LayerGroup | null>(null);
   const compactViewRef = useRef<{ center: L.LatLng; zoom: number } | null>(null);
   const wasExpandedRef = useRef(false);
 
@@ -46,6 +49,7 @@ export default function RouteMap({ direction, stops, reports, expanded, followBu
     L.control.zoom({ position: "bottomright" }).addTo(map);
     mapRef.current = map;
     routeLayersRef.current = L.layerGroup().addTo(map);
+    ghostLayersRef.current = L.layerGroup().addTo(map);
     reportLayersRef.current = L.layerGroup().addTo(map);
     map.setView([41.18, 1.48], 9);
     const frame = window.requestAnimationFrame(() => map.invalidateSize({ pan: false }));
@@ -55,6 +59,7 @@ export default function RouteMap({ direction, stops, reports, expanded, followBu
       mapRef.current = null;
       routeLayersRef.current = null;
       reportLayersRef.current = null;
+      ghostLayersRef.current = null;
     };
   }, []);
 
@@ -131,6 +136,29 @@ export default function RouteMap({ direction, stops, reports, expanded, followBu
     });
     return () => window.cancelAnimationFrame(frame);
   }, [expanded]);
+
+  useEffect(() => {
+    const layers = ghostLayersRef.current;
+    if (!layers) return;
+    layers.clearLayers();
+    for (const ghost of ghosts) {
+      const description = escapeHtml(`Bus fantasma sin verificar, salida ${ghost.departureTime}`);
+      const icon = L.divIcon({
+        className: "bus-map-icon-wrap",
+        html: `<span class="bus-map-marker" role="img" aria-label="${description}" title="${description}">
+          <span class="bus-map-status bus-map-status--ghost">Sin verificar</span>
+          <span class="bus-map-pin bus-map-pin--ghost" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 10h.01"/><path d="M15 10h.01"/><path d="M12 2a8 8 0 0 0-8 8v12l3-3 2.5 2.5L12 19l2.5 2.5L17 19l3 3V10a8 8 0 0 0-8-8z"/></svg>
+          </span>
+        </span>`,
+        iconSize: [128, 74],
+        iconAnchor: [64, 72],
+      });
+      L.marker([ghost.latitude, ghost.longitude], { icon, zIndexOffset: 100 })
+        .bindPopup(`<strong>Bus fantasma · salida ${escapeHtml(ghost.departureTime)}</strong><br><span class="popup-status popup-status--ghost">SIN VERIFICAR</span><br>Según el horario, ahora estaría entre ${escapeHtml(ghost.previousStop)} y ${escapeHtml(ghost.nextStop)}.<br><small>Es solo una estimación del horario: nadie ha confirmado que este bus exista ni dónde está.</small>`)
+        .addTo(layers);
+    }
+  }, [ghosts]);
 
   useEffect(() => {
     const map = mapRef.current;

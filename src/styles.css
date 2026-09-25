@@ -290,6 +290,48 @@ h1 span { color: var(--teal); }
 [data-theme="dark"] .bottom-nav { border-top-color: #263532; background: rgb(22 34 31 / 95%); }
 [data-theme="dark"] .legend-stop { border-color: #16221f; box-shadow: 0 0 0 1px #5f8078; }
 
+/* Ghost buses: schedule-only estimates, deliberately styled unlike real (shared) buses. */
+.bus-map-pin--ghost { border-style: dashed; background: #8b7fc7; color: #8b7fc7; opacity: .85; }
+.bus-map-status--ghost { border-style: dashed; border-color: #b3a9e0; color: #5b4f99; }
+.leaflet-popup-content .popup-status--ghost { color: #5b4f99; font-weight: 800; }
+.legend-ghost { width: 17px; height: 17px; margin-left: 4px; border: 1.5px dashed #8b7fc7; border-radius: 50%; display: grid; place-items: center; background: #f1eefb; color: #6b5fb0; }
+.ghost-notice { margin-bottom: 10px; padding: 11px 12px; border: 1px dashed #c4bce9; border-radius: 14px; background: #f4f2fc; color: #4d4380; display: flex; align-items: flex-start; gap: 10px; }
+.ghost-notice--off { align-items: center; }
+.ghost-notice-icon { width: 30px; height: 30px; flex: 0 0 auto; border-radius: 10px; background: #e6e1f8; color: #6b5fb0; display: grid; place-items: center; }
+.ghost-notice > div { min-width: 0; flex: 1; }
+.ghost-notice strong { font-size: 11px; letter-spacing: .1px; }
+.ghost-notice p { margin: 4px 0 0; font-size: 10px; line-height: 1.5; }
+.ghost-toggle { flex: 0 0 auto; padding: 6px 10px; border: 1px solid #c4bce9; border-radius: 99px; background: #fff; color: #5b4f99; font-size: 10px; font-weight: 700; cursor: pointer; }
+.ghost-toggle:hover { background: #ece8fa; }
+.ghost-block { margin-top: 14px; padding-top: 14px; border-top: 1px dashed #d3cdf0; }
+.ghost-block-title { display: flex; align-items: center; gap: 7px; color: #5b4f99; font-size: 10px; font-weight: 700; letter-spacing: .95px; }
+.ghost-block > p { margin: 6px 0 10px; color: #776fa3; font-size: 10px; line-height: 1.5; }
+.ghost-card { border-style: dashed; border-color: #c4bce9; background: #faf9fe; }
+.report-bus.ghost-bus { color: #6b5fb0; background: #e9e5f9; }
+.ghost-pill { padding: 3px 5px; border: 1px dashed #a99fd8; border-radius: 4px; color: #5b4f99; font-size: 7px; font-weight: 800; letter-spacing: .5px; }
+.ghost-where { margin: 8px 0 0; color: #4d4380; font-size: 10px; line-height: 1.45; }
+.ghost-warning { margin: 6px 0 0; padding: 7px 8px; border-radius: 9px; background: #f0edfb; color: #665c99; font-size: 9px; line-height: 1.45; }
+.ghost-claim { margin-top: 9px; padding: 7px 11px; border: 1px solid #c4bce9; border-radius: 9px; background: #fff; color: #5b4f99; font-size: 10px; font-weight: 700; cursor: pointer; }
+.ghost-claim:hover { background: #ece8fa; }
+[data-theme="dark"] .bus-map-pin--ghost { background: #7a6fc0; color: #7a6fc0; }
+[data-theme="dark"] .bus-map-status--ghost { border-color: #6a5fb0; background: #1b1830; color: #c2baf0; }
+[data-theme="dark"] .leaflet-popup-content .popup-status--ghost { color: #c2baf0; }
+[data-theme="dark"] .legend-ghost { border-color: #7a6fc0; background: #221e3d; color: #b9b0ee; }
+[data-theme="dark"] .ghost-notice { border-color: #4a4180; background: #1c1930; color: #cfc8f5; }
+[data-theme="dark"] .ghost-notice-icon { background: #2a2548; color: #b9b0ee; }
+[data-theme="dark"] .ghost-toggle { border-color: #4a4180; background: #221e3d; color: #cfc8f5; }
+[data-theme="dark"] .ghost-toggle:hover { background: #2a2548; }
+[data-theme="dark"] .ghost-block { border-top-color: #3d3670; }
+[data-theme="dark"] .ghost-block-title { color: #b9b0ee; }
+[data-theme="dark"] .ghost-block > p { color: #9b93c8; }
+[data-theme="dark"] .ghost-card { border-color: #4a4180; background: #1a1730; }
+[data-theme="dark"] .report-bus.ghost-bus { background: #2a2548; color: #b9b0ee; }
+[data-theme="dark"] .ghost-pill { border-color: #6a5fb0; color: #c2baf0; }
+[data-theme="dark"] .ghost-where { color: #cfc8f5; }
+[data-theme="dark"] .ghost-warning { background: #221e3d; color: #b3abdc; }
+[data-theme="dark"] .ghost-claim { border-color: #4a4180; background: #221e3d; color: #cfc8f5; }
+[data-theme="dark"] .ghost-claim:hover { background: #2a2548; }
+
 @media (min-width: 760px) {
   .topbar { height: 76px; }
   .main-content { width: min(100% - 48px, 670px); }

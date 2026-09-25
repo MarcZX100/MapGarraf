@@ -7,6 +7,7 @@ import {
   Clock3,
   Compass,
   Download,
+  Ghost,
   ExternalLink,
   ListOrdered,
   LocateFixed,
@@ -27,6 +28,7 @@ import { applyTheme, currentTheme, hasSavedTheme, saveTheme, type Theme } from "
 import RouteMap, { type BusReport } from "./RouteMap";
 import { directionLabel, officialScheduleUrl, officialTariffUrl, publishedPdfUrl, stops, timetables, type Direction } from "./data";
 import { getReportStatus } from "./reportStatus";
+import { getGhostBuses, ghostsApplyToday, unclaimedGhosts, type GhostBus } from "./ghostBuses";
 
 type Occupancy = "low" | "medium" | "high" | null;
 type ShareSession = { id: string; token: string };
@@ -64,6 +66,8 @@ export default function App() {
   const [theme, setTheme] = useState<Theme>(currentTheme);
   const [page, setPage] = useState<Page>(DEFAULT_PAGE);
   const pagerRef = useRef<HTMLElement>(null);
+  const [now, setNow] = useState(() => new Date());
+  const [showGhosts, setShowGhosts] = useState(loadShowGhosts);
 
   const mapExpandButtonRef = useRef<HTMLButtonElement>(null);
   const mapCloseButtonRef = useRef<HTMLButtonElement>(null);
@@ -161,6 +165,29 @@ export default function App() {
     () => aggregateReports(reports.filter((report) => report.direction === direction), myReportId),
     [reports, direction, myReportId],
   );
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(new Date()), 15_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const ghostsToday = ghostsApplyToday(now);
+  const ghosts = useMemo(
+    () => (showGhosts ? unclaimedGhosts(getGhostBuses(direction, now), activeReports, direction, now) : []),
+    [showGhosts, direction, now, activeReports],
+  );
+
+  function toggleGhosts() {
+    const next = !showGhosts;
+    setShowGhosts(next);
+    try { localStorage.setItem(SHOW_GHOSTS_KEY, next ? "1" : "0"); } catch { /* preference lasts only for this visit */ }
+  }
+
+  function claimGhostTrip(ghost: GhostBus) {
+    setDraftValue("departureTime", ghost.departureTime);
+    setShowOptions(true);
+    window.setTimeout(() => document.querySelector(".share-card")?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
+  }
+
   const trackedMapReport = activeReports.find((report) => report.id === trackedMapBusId) ?? activeReports[0] ?? null;
   const currentDirection = timetables[direction];
   const selectedStopTimes = currentDirection.departures.map((time) => shiftClock(time, currentDirection.stopOffsets[scheduleStopIndex] || 0));
@@ -516,6 +543,16 @@ export default function App() {
             <div><div className="section-kicker"><MapPinned size={15} /> MAPA DEL RECORRIDO</div><h2 id="map-title">{directionLabel[direction]}</h2></div>
             <span className="distance-badge">≈ 50 km · 1 h 15</span>
           </div>
+          <div className={`ghost-notice${showGhosts ? "" : " ghost-notice--off"}`} role="note">
+            <span className="ghost-notice-icon"><Ghost size={18} /></span>
+            <div>
+              <strong>{showGhosts ? "Buses fantasma · sin verificar" : "Buses fantasma ocultos"}</strong>
+              {showGhosts && <p>{ghostsToday
+                ? "Los fantasmas (violeta, línea discontinua) marcan dónde DEBERÍA estar cada bus según el horario publicado. Nadie ha confirmado que existan ni que circulen. Se sustituyen por la posición real cuando un viajero comparte ese bus."
+                : "El horario incorporado es de lunes a viernes, así que hoy no se muestran buses fantasma. Solo verás buses compartidos por viajeros."}</p>}
+            </div>
+            <button className="ghost-toggle" aria-pressed={showGhosts} onClick={toggleGhosts}>{showGhosts ? "Ocultar" : "Mostrar"}</button>
+          </div>
           {mapExpanded && <div className="map-scrim" aria-hidden="true" onClick={() => setMapExpanded(false)} />}
           <div
             className={`map-card${mapExpanded ? " map-card--expanded" : ""}`}
@@ -564,18 +601,19 @@ export default function App() {
               direction={direction}
               stops={stops}
               reports={activeReports}
+              ghosts={ghosts}
               expanded={mapExpanded}
               followBus={followMapBus}
               followReportId={trackedMapReport?.id ?? null}
             />
-            <div className="map-legend"><span className="legend-bus"><BusFront size={13} /></span><span>Posición compartida</span><span className="legend-status legend-status--on-time" /><span>En hora</span><span className="legend-status legend-status--late" /><span>Retraso</span><span className="legend-status legend-status--unknown" /><span>Sin dato</span><span className="legend-stop" /><span>Parada</span></div>
+            <div className="map-legend"><span className="legend-bus"><BusFront size={13} /></span><span>Posición compartida</span><span className="legend-status legend-status--on-time" /><span>En hora</span><span className="legend-status legend-status--late" /><span>Retraso</span><span className="legend-status legend-status--unknown" /><span>Sin dato</span><span className="legend-stop" /><span>Parada</span>{showGhosts && <><span className="legend-ghost"><Ghost size={11} /></span><span>Fantasma · sin verificar</span></>}</div>
           </div>
-          <p className="map-footnote">El color resume el retraso comunicado por viajeros; «Sin dato» no significa que vaya tarde. Las 16 paradas usan ubicaciones de datos públicos; toca un punto para ver su nombre. El trazado sigue las calles entre paradas; no es una posición GPS oficial.</p>
+          <p className="map-footnote">El color resume el retraso comunicado por viajeros; «Sin dato» no significa que vaya tarde. Las 16 paradas usan ubicaciones de datos públicos; toca un punto para ver su nombre. El trazado sigue las calles entre paradas; no es una posición GPS oficial. Los buses fantasma son solo una estimación del horario y no están verificados.</p>
         </section>
 
         <section className="reports-section">
           <div className="section-heading report-heading">
-            <div><div className="section-kicker"><Radio size={15} /> AHORA EN LA RUTA</div><h2>{activeReports.length ? `${activeReports.length} ${activeReports.length === 1 ? "señal activa" : "señales activas"}` : "Aún no hay buses"}</h2></div>
+            <div><div className="section-kicker"><Radio size={15} /> AHORA EN LA RUTA</div><h2>{activeReports.length ? `${activeReports.length} ${activeReports.length === 1 ? "señal activa" : "señales activas"}` : "Aún no hay buses verificados"}</h2></div>
             <span className={`live-pill ${activeReports.length ? "live" : ""}`}><i />{activeReports.length ? "EN VIVO" : "COMUNIDAD"}</span>
           </div>
           {activeReports.length ? (
@@ -584,6 +622,15 @@ export default function App() {
             </div>
           ) : (
             <div className="empty-state"><span className="empty-icon"><BusFront size={21} /></span><div><strong>Sé la primera señal</strong><p>Si ya estás a bordo, comparte la ubicación del bus para ayudar a quienes esperan.</p></div></div>
+          )}
+          {ghosts.length > 0 && (
+            <div className="ghost-block">
+              <div className="ghost-block-title"><Ghost size={15} /> BUSES FANTASMA · SIN VERIFICAR</div>
+              <p>Calculados solo con el horario publicado. No hay ningún aviso de viajeros que los confirme, así que pueden no existir.</p>
+              <div className="report-list">
+                {ghosts.map((ghost) => <GhostCard key={ghost.id} ghost={ghost} onClaim={() => claimGhostTrip(ghost)} />)}
+              </div>
+            </div>
           )}
         </section>
 
@@ -632,6 +679,29 @@ export default function App() {
 
 function Choice({ selected, onClick, children }: { selected: boolean; onClick: () => void; children: React.ReactNode }) {
   return <button type="button" className={`choice ${selected ? "chosen" : ""}`} aria-pressed={selected} onClick={onClick}>{selected && <Check size={13} />}{children}</button>;
+}
+
+const SHOW_GHOSTS_KEY = "showGhosts";
+
+function loadShowGhosts() {
+  try {
+    return localStorage.getItem(SHOW_GHOSTS_KEY) !== "0";
+  } catch {
+    return true;
+  }
+}
+
+function GhostCard({ ghost, onClaim }: { ghost: GhostBus; onClaim: () => void }) {
+  return <article className="report-card ghost-card">
+    <span className="report-bus ghost-bus"><Ghost size={19} /></span>
+    <div className="report-main">
+      <div className="report-title"><strong>Bus fantasma · salida {ghost.departureTime}</strong><span className="ghost-pill">SIN VERIFICAR</span></div>
+      <div className="report-meta"><span>Llegada prevista {ghost.arrivalTime}</span></div>
+      <p className="ghost-where">Según el horario, ahora estaría entre <strong>{ghost.previousStop}</strong> y <strong>{ghost.nextStop}</strong>.</p>
+      <p className="ghost-warning">Solo es una estimación: nadie ha confirmado que este bus circule ni dónde está. Puede no existir, ir con retraso o no haber salido.</p>
+      <button className="ghost-claim" onClick={onClaim}>Voy en este bus</button>
+    </div>
+  </article>;
 }
 
 function ReportCard({ report, own }: { report: MapReport; own: boolean }) {
