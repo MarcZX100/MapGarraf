@@ -294,6 +294,7 @@ h1 span { color: var(--teal); }
 .bus-map-pin--ghost { border-style: dashed; background: #8b7fc7; color: #8b7fc7; opacity: .85; }
 .bus-map-status--ghost { border-style: dashed; border-color: #b3a9e0; color: #5b4f99; }
 .leaflet-popup-content .popup-status--ghost { color: #5b4f99; font-weight: 800; }
+.map-live-summary.is-ghost .map-live-indicator { background: #8b7fc7; box-shadow: 0 0 0 4px rgb(139 127 199 / 22%); }
 .legend-ghost { width: 17px; height: 17px; margin-left: 4px; border: 1.5px dashed #8b7fc7; border-radius: 50%; display: grid; place-items: center; background: #f1eefb; color: #6b5fb0; }
 .ghost-notice { margin-bottom: 10px; padding: 11px 12px; border: 1px dashed #c4bce9; border-radius: 14px; background: #f4f2fc; color: #4d4380; display: flex; align-items: flex-start; gap: 10px; }
 .ghost-notice--off { align-items: center; }

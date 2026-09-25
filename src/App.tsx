@@ -166,7 +166,7 @@ export default function App() {
     [reports, direction, myReportId],
   );
   useEffect(() => {
-    const timer = window.setInterval(() => setNow(new Date()), 15_000);
+    const timer = window.setInterval(() => setNow(new Date()), 5_000);
     return () => window.clearInterval(timer);
   }, []);
 
@@ -188,7 +188,8 @@ export default function App() {
     window.setTimeout(() => document.querySelector(".share-card")?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
   }
 
-  const trackedMapReport = activeReports.find((report) => report.id === trackedMapBusId) ?? activeReports[0] ?? null;
+  const trackedGhost = ghosts.find((ghost) => ghost.id === trackedMapBusId) ?? null;
+  const trackedMapReport = trackedGhost ? null : (activeReports.find((report) => report.id === trackedMapBusId) ?? activeReports[0] ?? null);
   const currentDirection = timetables[direction];
   const selectedStopTimes = currentDirection.departures.map((time) => shiftClock(time, currentDirection.stopOffsets[scheduleStopIndex] || 0));
 
@@ -567,28 +568,30 @@ export default function App() {
               </button>
             ) : (
               <div className="map-expanded-toolbar">
-                <div className={`map-live-summary${trackedMapReport ? " has-live-report" : ""}`} aria-live="polite">
+                <div className={`map-live-summary${trackedMapReport ? " has-live-report" : ""}${trackedGhost ? " is-ghost" : ""}`} aria-live="polite">
                   <span className="map-live-indicator" />
                   <span>
-                    <strong id="map-expanded-title">{trackedMapReport ? (trackedMapReport.vehicleLabel ? `Bus ${trackedMapReport.vehicleLabel}` : "Bus compartido") : "Recorrido completo"}</strong>
-                    <small>{trackedMapReport ? `${trackedMapReport.ageSeconds < 60 ? "ahora" : `hace ${Math.floor(trackedMapReport.ageSeconds / 60)} min`} · ${getReportStatus(trackedMapReport.delayMinutes).label}${followMapBus ? " · siguiéndolo" : ""}` : "Sin buses activos; se muestra toda la ruta."}</small>
+                    <strong id="map-expanded-title">{trackedGhost ? `Bus fantasma · salida ${trackedGhost.departureTime}` : trackedMapReport ? (trackedMapReport.vehicleLabel ? `Bus ${trackedMapReport.vehicleLabel}` : "Bus compartido") : "Recorrido completo"}</strong>
+                    <small>{trackedGhost ? `SIN VERIFICAR · estimado por horario${followMapBus ? " · siguiéndolo" : ""}` : trackedMapReport ? `${trackedMapReport.ageSeconds < 60 ? "ahora" : `hace ${Math.floor(trackedMapReport.ageSeconds / 60)} min`} · ${getReportStatus(trackedMapReport.delayMinutes).label}${followMapBus ? " · siguiéndolo" : ""}` : "Sin buses activos; se muestra toda la ruta."}</small>
                   </span>
                 </div>
                 <div className="map-expanded-actions">
-                  {activeReports.length > 1 && (
+                  {(activeReports.length > 1 || ghosts.length > 0) && (
                     <select
                       className="map-bus-select"
-                      value={trackedMapReport?.id ?? ""}
+                      value={trackedGhost?.id ?? trackedMapReport?.id ?? ""}
                       aria-label="Elige el autobús que quieres seguir"
                       onChange={(event) => {
                         setTrackedMapBusId(event.target.value);
                         setFollowMapBus(true);
                       }}
                     >
+                      {!trackedGhost && !trackedMapReport && <option value="" disabled>Elige un bus…</option>}
                       {activeReports.map((report, index) => <option key={report.id} value={report.id}>{report.vehicleLabel ? `Bus ${report.vehicleLabel}` : `Bus compartido ${index + 1}`}</option>)}
+                      {ghosts.map((ghost) => <option key={ghost.id} value={ghost.id}>{`Fantasma ${ghost.departureTime} · sin verificar`}</option>)}
                     </select>
                   )}
-                  {trackedMapReport && (
+                  {(trackedMapReport || trackedGhost) && (
                     <button className={`map-follow-toggle${followMapBus ? " is-following" : ""}`} aria-pressed={followMapBus} onClick={() => setFollowMapBus((value) => !value)}>
                       <LocateFixed size={15} />{followMapBus ? "Siguiendo" : "Seguir bus"}
                     </button>
@@ -605,7 +608,7 @@ export default function App() {
               expanded={mapExpanded}
               followBus={followMapBus}
               onUserMove={() => setFollowMapBus(false)}
-              followReportId={trackedMapReport?.id ?? null}
+              followReportId={trackedGhost?.id ?? trackedMapReport?.id ?? null}
             />
             <div className="map-legend"><span className="legend-bus"><BusFront size={13} /></span><span>Posición compartida</span><span className="legend-status legend-status--on-time" /><span>En hora</span><span className="legend-status legend-status--late" /><span>Retraso</span><span className="legend-status legend-status--unknown" /><span>Sin dato</span><span className="legend-stop" /><span>Parada</span>{showGhosts && <><span className="legend-ghost"><Ghost size={11} /></span><span>Fantasma · sin verificar</span></>}</div>
           </div>

@@ -37,6 +37,7 @@ export default function RouteMap({ direction, stops, reports, ghosts, expanded, 
   const routeLayersRef = useRef<L.LayerGroup | null>(null);
   const reportLayersRef = useRef<L.LayerGroup | null>(null);
   const ghostLayersRef = useRef<L.LayerGroup | null>(null);
+  const ghostMarkersRef = useRef(new Map<string, L.Marker>());
   const compactViewRef = useRef<{ center: L.LatLng; zoom: number } | null>(null);
   const wasExpandedRef = useRef(false);
   const programmaticMoveRef = useRef(false);
@@ -69,6 +70,7 @@ export default function RouteMap({ direction, stops, reports, ghosts, expanded, 
       routeLayersRef.current = null;
       reportLayersRef.current = null;
       ghostLayersRef.current = null;
+      ghostMarkersRef.current.clear();
     };
   }, []);
 
@@ -153,40 +155,61 @@ export default function RouteMap({ direction, stops, reports, ghosts, expanded, 
   useEffect(() => {
     const layers = ghostLayersRef.current;
     if (!layers) return;
-    layers.clearLayers();
+    // Update markers in place so an open popup survives the periodic position refresh.
+    const markers = ghostMarkersRef.current;
+    const liveIds = new Set(ghosts.map((ghost) => ghost.id));
+    for (const [id, marker] of markers) {
+      if (!liveIds.has(id)) {
+        layers.removeLayer(marker);
+        markers.delete(id);
+      }
+    }
     for (const ghost of ghosts) {
-      const description = escapeHtml(`Bus fantasma sin verificar, salida ${ghost.departureTime}`);
-      const icon = L.divIcon({
-        className: "bus-map-icon-wrap",
-        html: `<span class="bus-map-marker" role="img" aria-label="${description}" title="${description}">
-          <span class="bus-map-status bus-map-status--ghost">Sin verificar</span>
-          <span class="bus-map-pin bus-map-pin--ghost" aria-hidden="true">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 10h.01"/><path d="M15 10h.01"/><path d="M12 2a8 8 0 0 0-8 8v12l3-3 2.5 2.5L12 19l2.5 2.5L17 19l3 3V10a8 8 0 0 0-8-8z"/></svg>
-          </span>
-        </span>`,
-        iconSize: [128, 74],
-        iconAnchor: [64, 72],
-      });
-      L.marker([ghost.latitude, ghost.longitude], { icon, zIndexOffset: 100 })
-        .bindPopup(`<strong>Bus fantasma · salida ${escapeHtml(ghost.departureTime)}</strong><br><span class="popup-status popup-status--ghost">SIN VERIFICAR</span><br>Según el horario, ahora estaría entre ${escapeHtml(ghost.previousStop)} y ${escapeHtml(ghost.nextStop)}.<br><small>Es solo una estimación del horario: nadie ha confirmado que este bus exista ni dónde está.</small>`)
-        .addTo(layers);
+      const point = L.latLng(ghost.latitude, ghost.longitude);
+      const existing = markers.get(ghost.id);
+      if (existing) {
+        existing.setLatLng(point);
+        existing.setPopupContent(ghostPopupHtml(ghost));
+        continue;
+      }
+      const marker = L.marker(point, { icon: ghostIcon(ghost), zIndexOffset: 100 }).bindPopup(ghostPopupHtml(ghost)).addTo(layers);
+      markers.set(ghost.id, marker);
     }
   }, [ghosts]);
 
   useEffect(() => {
     const map = mapRef.current;
     if (!map || !expanded || !followBus || !followReportId) return;
-    const report = reports.find((candidate) => candidate.id === followReportId);
-    if (!report) return;
-    const point = L.latLng(report.latitude, report.longitude);
+    const target = reports.find((candidate) => candidate.id === followReportId) ?? ghosts.find((candidate) => candidate.id === followReportId);
+    if (!target) return;
+    const point = L.latLng(target.latitude, target.longitude);
     const zoom = Math.max(map.getZoom(), 15);
     if (map.getCenter().distanceTo(point) > 15 || map.getZoom() < zoom) {
       programmaticMoveRef.current = true;
       map.flyTo(point, zoom, { animate: true, duration: 0.55 });
     }
-  }, [expanded, followBus, followReportId, reports]);
+  }, [expanded, followBus, followReportId, reports, ghosts]);
 
   return <div className="route-map" ref={elementRef} role="img" aria-label="Mapa interactivo de la ruta y las posiciones compartidas entre Tarragona y Vilanova i la Geltrú" />;
+}
+
+function ghostIcon(ghost: GhostBus) {
+  const description = escapeHtml(`Bus fantasma sin verificar, salida ${ghost.departureTime}`);
+  return L.divIcon({
+    className: "bus-map-icon-wrap",
+    html: `<span class="bus-map-marker" role="img" aria-label="${description}" title="${description}">
+      <span class="bus-map-status bus-map-status--ghost">Sin verificar</span>
+      <span class="bus-map-pin bus-map-pin--ghost" aria-hidden="true">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 10h.01"/><path d="M15 10h.01"/><path d="M12 2a8 8 0 0 0-8 8v12l3-3 2.5 2.5L12 19l2.5 2.5L17 19l3 3V10a8 8 0 0 0-8-8z"/></svg>
+      </span>
+    </span>`,
+    iconSize: [128, 74],
+    iconAnchor: [64, 72],
+  });
+}
+
+function ghostPopupHtml(ghost: GhostBus) {
+  return `<strong>Bus fantasma · salida ${escapeHtml(ghost.departureTime)}</strong><br><span class="popup-status popup-status--ghost">SIN VERIFICAR</span><br>Según el horario, ahora estaría entre ${escapeHtml(ghost.previousStop)} y ${escapeHtml(ghost.nextStop)}.<br><small>Es solo una estimación del horario: nadie ha confirmado que este bus exista ni dónde está.</small>`;
 }
 
 function escapeHtml(value: string) {
