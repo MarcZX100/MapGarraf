@@ -1,10 +1,12 @@
 :root {
   font-family: "Avenir Next", Avenir, "Segoe UI", sans-serif;
-  color: #182c2b;
-  background: #f7f8f5;
+  color: var(--ink);
+  background: var(--bg);
+  color-scheme: light;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
+  --bg: #f7f8f5;
   --ink: #182c2b;
   --muted: #71817e;
   --teal: #117d73;
@@ -229,6 +231,69 @@ h1 span { color: var(--teal); }
 .spin { animation: spin .8s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @keyframes appear { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: translateY(0); } }
+
+/* Dark theme: applied via data-theme="dark" on <html> (set by /theme-init.js and the topbar toggle). */
+:root[data-theme="dark"] { color-scheme: dark; --bg: #0f1a19; --ink: #e3eeeb; --muted: #93a5a0; --teal: #2fae9f; --teal-deep: #1c8a7e; --teal-pale: #163a32; --line: #263532; --paper: #16221f; }
+[data-theme="dark"] .icon-button { background: var(--paper); color: #b5c6c1; }
+[data-theme="dark"] .icon-button:hover { background: #1f302c; color: #5fd0c0; }
+[data-theme="dark"] .brand small, [data-theme="dark"] .eyebrow, [data-theme="dark"] .intro p, [data-theme="dark"] .section-kicker, [data-theme="dark"] .distance-badge, [data-theme="dark"] .map-footnote, [data-theme="dark"] .live-pill, [data-theme="dark"] .empty-state p, [data-theme="dark"] .report-meta, [data-theme="dark"] .info-tile small, [data-theme="dark"] .schedule-caption, [data-theme="dark"] .last-service, [data-theme="dark"] .stops-list li small, [data-theme="dark"] .trust-card p, [data-theme="dark"] .page-footer, [data-theme="dark"] .map-legend, [data-theme="dark"] .schedule-stop-select, [data-theme="dark"] .install-dialog p, [data-theme="dark"] .map-live-summary small, [data-theme="dark"] .leaflet-popup-content small, [data-theme="dark"] .bottom-link, [data-theme="dark"] .direction-arrow, [data-theme="dark"] .info-tile > svg, [data-theme="dark"] .detail-title { color: #93a5a0; }
+[data-theme="dark"] .page-footer a { color: #7fb5a8; }
+[data-theme="dark"] .empty-state strong, [data-theme="dark"] .trust-card strong, [data-theme="dark"] .map-live-summary strong, [data-theme="dark"] .install-dialog p strong { color: #cfe0db; }
+[data-theme="dark"] .eyebrow-dot { box-shadow: 0 0 0 4px rgb(232 152 50 / 20%); }
+[data-theme="dark"] .direction-card, [data-theme="dark"] .report-card, [data-theme="dark"] .info-tile, [data-theme="dark"] .detail-panel, [data-theme="dark"] .distance-badge { background: var(--paper); box-shadow: none; }
+[data-theme="dark"] .direction-switch button { border-color: #2a3c37; background: #1a2926; color: #9fb1ac; }
+[data-theme="dark"] .direction-switch button.selected { border-color: #2b7f74; background: #123c37; color: #7fdccb; box-shadow: inset 0 0 0 1px #1d5c54; }
+[data-theme="dark"] .notice { border-color: #4a3d1f; background: #2b2415; color: #e6cf9f; }
+[data-theme="dark"] .map-card, [data-theme="dark"] .map-card--expanded { border-color: #2a3c37; background: #14201e; box-shadow: none; }
+[data-theme="dark"] .route-map { background: #14201e; }
+[data-theme="dark"] .map-scrim { background: rgb(0 0 0 / 65%); }
+[data-theme="dark"] .map-expand-button, [data-theme="dark"] .map-live-summary, [data-theme="dark"] .map-bus-select, [data-theme="dark"] .map-follow-toggle, [data-theme="dark"] .map-close-button { border-color: #2c3f3a; background: rgb(22 34 31 / 96%); color: #cfe0db; box-shadow: 0 2px 8px rgb(0 0 0 / 35%); }
+[data-theme="dark"] .map-expand-button:hover, [data-theme="dark"] .map-follow-toggle:hover, [data-theme="dark"] .map-close-button:hover { background: #22352f; }
+[data-theme="dark"] .map-follow-toggle.is-following { border-color: #1c8a7e; background: #1c8a7e; color: #fff; }
+[data-theme="dark"] .map-follow-toggle.is-following:hover { background: #2fae9f; }
+[data-theme="dark"] .map-card--expanded .map-legend { border-top-color: #2a3c37; background: var(--paper); }
+[data-theme="dark"] .map-live-summary.has-live-report .map-live-indicator { box-shadow: 0 0 0 4px rgb(57 167 125 / 25%); }
+[data-theme="dark"] .leaflet-tile-pane { filter: invert(1) hue-rotate(180deg) brightness(.95) contrast(.9) saturate(.75); }
+[data-theme="dark"] .leaflet-control-attribution { background: rgb(15 26 25 / 75%) !important; color: #93a5a0 !important; }
+[data-theme="dark"] .leaflet-control-attribution a { color: #7fb5a8 !important; }
+[data-theme="dark"] .leaflet-control-zoom { border-color: #2c3f3a !important; }
+[data-theme="dark"] .leaflet-control-zoom a { background: #16221f !important; color: #cfe0db !important; border-bottom-color: #2c3f3a !important; }
+[data-theme="dark"] .leaflet-tooltip { background: #16221f !important; color: #cfe0db !important; }
+[data-theme="dark"] .leaflet-popup-content-wrapper, [data-theme="dark"] .leaflet-popup-tip { background: #16221f; color: #e3eeeb; }
+[data-theme="dark"] .bus-map-status { background: #16221f; }
+[data-theme="dark"] .bus-map-status--on-time, [data-theme="dark"] .leaflet-popup-content .popup-status--on-time { border-color: #23503a; color: #7ad3a0; }
+[data-theme="dark"] .bus-map-status--early, [data-theme="dark"] .leaflet-popup-content .popup-status--early { border-color: #1f4f4a; color: #76d3cb; }
+[data-theme="dark"] .bus-map-status--delayed, [data-theme="dark"] .leaflet-popup-content .popup-status--delayed { border-color: #56431a; color: #e8bf6a; }
+[data-theme="dark"] .bus-map-status--late, [data-theme="dark"] .leaflet-popup-content .popup-status--late { border-color: #5c2b26; color: #f0918a; }
+[data-theme="dark"] .bus-map-status--unknown, [data-theme="dark"] .leaflet-popup-content .popup-status--unknown { border-color: #2c3a36; color: #9db0aa; }
+[data-theme="dark"] .live-pill { border-color: #2a3c37; }
+[data-theme="dark"] .live-pill.live { border-color: #23503a; background: #12291f; color: #6fcaa5; }
+[data-theme="dark"] .empty-state { border-color: #34473f; background: #131f1d; }
+[data-theme="dark"] .empty-icon { background: #1c2e2a; color: #6ab7a5; }
+[data-theme="dark"] .report-bus { background: #33270f; color: #e8b467; }
+[data-theme="dark"] .mine-pill { background: #163a32; color: #7fd3bd; }
+[data-theme="dark"] .report-tags span { background: #1c2a27; color: #a3b5b0; }
+[data-theme="dark"] .report-timing--on-time { border-color: #23503a; background: #12291f; color: #7ad3a0; }
+[data-theme="dark"] .report-timing--early { border-color: #1f4f4a; background: #10282a; color: #76d3cb; }
+[data-theme="dark"] .report-timing--delayed { border-color: #56431a; background: #2b2210; color: #e8bf6a; }
+[data-theme="dark"] .report-timing--late { border-color: #5c2b26; background: #2e1614; color: #f0918a; }
+[data-theme="dark"] .report-timing--unknown { border-color: #2c3a36; background: #17211f; color: #9db0aa; }
+[data-theme="dark"] .info-tile:hover, [data-theme="dark"] .info-tile.tile-open { border-color: #2d5d54; background: #1a2926; }
+[data-theme="dark"] .tile-icon { background: #1a2e2a; }
+[data-theme="dark"] .schedule-stop-select select { border-color: #2b3d38; background: #1a2926; color: #cfe0db; }
+[data-theme="dark"] .departure-chip { border-color: #2b3d38; background: #1a2926; color: #b6cbc5; }
+[data-theme="dark"] .departure-chip:hover { border-color: #2b7f74; background: #1f3a34; }
+[data-theme="dark"] .source-links { border-top-color: #263532; }
+[data-theme="dark"] .stops-list li:not(:last-child)::before { background: #2b3f39; }
+[data-theme="dark"] .stop-index { border-color: #2b3f39; background: #1a2b27; color: #6fbfab; }
+[data-theme="dark"] .trust-card { border-color: #263532; background: #131f1d; }
+[data-theme="dark"] .trust-icon { background: #1c2a27; color: #7fb5a8; }
+[data-theme="dark"] .install-dialog { background: var(--paper); box-shadow: 0 16px 60px rgb(0 0 0 / 50%); }
+[data-theme="dark"] .dialog-close { background: #22312d; color: #9fb1ac; }
+[data-theme="dark"] .install-dialog-icon { background: #163a32; }
+[data-theme="dark"] .dialog-backdrop { background: rgb(0 0 0 / 60%); }
+[data-theme="dark"] .bottom-nav { border-top-color: #263532; background: rgb(22 34 31 / 95%); }
+[data-theme="dark"] .legend-stop { border-color: #16221f; box-shadow: 0 0 0 1px #5f8078; }
 
 @media (min-width: 760px) {
   .topbar { height: 76px; }

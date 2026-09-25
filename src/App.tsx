@@ -10,6 +10,7 @@ import {
   ExternalLink,
   LocateFixed,
   Maximize2,
+  Moon,
   MapPinned,
   MapPin,
   Minimize2,
@@ -17,9 +18,11 @@ import {
   Radio,
   RefreshCw,
   Signal,
+  Sun,
   Users,
   X,
 } from "lucide-react";
+import { applyTheme, currentTheme, hasSavedTheme, saveTheme, type Theme } from "./theme";
 import RouteMap, { type BusReport } from "./RouteMap";
 import { directionLabel, officialScheduleUrl, officialTariffUrl, publishedPdfUrl, stops, timetables, type Direction } from "./data";
 import { getReportStatus } from "./reportStatus";
@@ -50,6 +53,7 @@ export default function App() {
   const [followMapBus, setFollowMapBus] = useState(true);
   const [trackedMapBusId, setTrackedMapBusId] = useState<string | null>(null);
   const [installPrompt, setInstallPrompt] = useState<InstallPrompt | null>(null);
+  const [theme, setTheme] = useState<Theme>(currentTheme);
 
   const mapExpandButtonRef = useRef<HTMLButtonElement>(null);
   const mapCloseButtonRef = useRef<HTMLButtonElement>(null);
@@ -96,6 +100,25 @@ export default function App() {
     window.addEventListener("beforeinstallprompt", onInstallPrompt);
     return () => window.removeEventListener("beforeinstallprompt", onInstallPrompt);
   }, []);
+
+  useEffect(() => {
+    const query = window.matchMedia("(prefers-color-scheme: dark)");
+    const onChange = (event: MediaQueryListEvent) => {
+      if (hasSavedTheme()) return;
+      const next = event.matches ? "dark" : "light";
+      applyTheme(next);
+      setTheme(next);
+    };
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, []);
+
+  function toggleTheme() {
+    const next = theme === "dark" ? "light" : "dark";
+    applyTheme(next);
+    saveTheme(next);
+    setTheme(next);
+  }
 
   const setDraftValue = <K extends keyof Draft>(key: K, value: Draft[K]) => {
     setDraft((current) => ({ ...current, [key]: value }));
@@ -346,6 +369,7 @@ export default function App() {
           <span><strong>MapGarraf</strong><small>BUSGARRAF · COMUNIDAD</small></span>
         </a>
         <div className="topbar-actions">
+          <button className="icon-button" onClick={toggleTheme} aria-label={theme === "dark" ? "Activar modo claro" : "Activar modo oscuro"}>{theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}</button>
           <button className="icon-button install-button" onClick={() => void installApp()} aria-label="Instalar aplicación"><Download size={19} /></button>
           <button className="icon-button" onClick={() => void fetchReports()} aria-label="Actualizar buses"><RefreshCw size={18} className={loadingReports ? "spin" : ""} /></button>
         </div>
