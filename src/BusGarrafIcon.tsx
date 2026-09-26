@@ -1,0 +1,26 @@
+type Props = { size?: number; className?: string };
+
+/** BusGarraf-blue app bus with the supplied Steam emote used as its windshield face. */
+export default function BusGarrafIcon({ size = 40, className }: Props) {
+  return (
+    <svg
+      className={className}
+      width={size}
+      height={size}
+      viewBox="0 0 512 512"
+      fill="none"
+      role="img"
+      aria-hidden="true"
+      focusable="false"
+    >
+      <rect width="512" height="512" rx="144" fill="#003C8C" />
+      <path d="M127 134c0-28 23-51 51-51h156c28 0 51 23 51 51v202c0 17-14 31-31 31h-5v35c0 14-11 25-25 25s-25-11-25-25v-35h-86v35c0 14-11 25-25 25s-25-11-25-25v-35h-5c-17 0-31-14-31-31V134Z" fill="#F6F9FE" />
+      <path d="M164 134c0-8 6-14 14-14h156c8 0 14 6 14 14v85H164v-85Z" fill="#739CD2" />
+      <image href="/steamhappy.png" x="204" y="121" width="104" height="98" preserveAspectRatio="xMidYMid meet" />
+      <rect x="158" y="244" width="196" height="75" rx="7" fill="#003C8C" />
+      <path d="M178 259h156" stroke="#739CD2" strokeWidth="8" strokeLinecap="round" />
+      <circle cx="191" cy="352" r="19" fill="#739CD2" />
+      <circle cx="321" cy="352" r="19" fill="#739CD2" />
+    </svg>
+  );
+}

@@ -91,14 +91,14 @@ export default function RouteMap({ direction, stops, reports, ghosts, expanded, 
 
     const orderedStops = direction === "to-tarragona" ? stops : [...stops].reverse();
     const roadPoints = roadShapeByDirection[direction].map(([lat, lng]) => L.latLng(lat, lng));
-    L.polyline(roadPoints, { color: "#117d73", weight: 5, opacity: 0.84, lineCap: "round", lineJoin: "round" }).addTo(layers);
+    L.polyline(roadPoints, { color: "#739cd2", weight: 5, opacity: 0.9, lineCap: "round", lineJoin: "round" }).addTo(layers);
     for (const [index, stop] of orderedStops.entries()) {
       const point = stop.coordinates[direction];
       L.circleMarker([point.lat, point.lng], {
         radius: 5,
         color: "#ffffff",
         weight: 2,
-        fillColor: "#117d73",
+        fillColor: "#003c8c",
         fillOpacity: 1,
       }).bindPopup(`<strong>${index + 1}. ${escapeHtml(stop.name)}</strong><br>${escapeHtml(stop.town)}`).addTo(layers);
     }

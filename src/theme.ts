@@ -1,7 +1,7 @@
 export type Theme = "light" | "dark";
 
 const STORAGE_KEY = "theme";
-const THEME_COLOR: Record<Theme, string> = { light: "#f7f8f5", dark: "#0f1a19" };
+const THEME_COLOR: Record<Theme, string> = { light: "#f3f6fb", dark: "#081426" };
 
 export function currentTheme(): Theme {
   return document.documentElement.dataset.theme === "dark" ? "dark" : "light";

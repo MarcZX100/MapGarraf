@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownUp,
-  BusFront,
   Check,
   ChevronDown,
   Clock3,
@@ -25,6 +24,7 @@ import {
   X,
 } from "lucide-react";
 import { applyTheme, currentTheme, hasSavedTheme, saveTheme, type Theme } from "./theme";
+import BusGarrafIcon from "./BusGarrafIcon";
 import RouteMap, { type BusReport } from "./RouteMap";
 import { directionLabel, officialScheduleUrl, officialTariffUrl, publishedPdfUrl, stops, timetables, type Direction } from "./data";
 import { getReportStatus } from "./reportStatus";
@@ -467,7 +467,7 @@ export default function App() {
     <div className="app-shell">
       <header className="topbar">
         <a className="brand" href="#inicio" aria-label="MapGarraf, inicio" onClick={(event) => { event.preventDefault(); goToPage(DEFAULT_PAGE); }}>
-          <span className="brand-mark"><BusFront size={19} strokeWidth={2.4} /></span>
+          <span className="brand-mark"><BusGarrafIcon size={40} /></span>
           <span><strong>MapGarraf</strong><small>BUSGARRAF · COMUNIDAD</small></span>
         </a>
         <div className="topbar-actions">
@@ -487,7 +487,7 @@ export default function App() {
               <p className="schedule-caption">Salidas del PDF del operador para días laborables, consultado el 25 de septiembre de 2026. Hay cambios por temporada, festivos e incidencias; verifica antes de salir.</p>
               <label className="schedule-stop-select">Ver salidas en
                 <select value={scheduleStopIndex} onChange={(event) => setScheduleStopIndex(Number(event.target.value))}>
-                  {currentDirection.stops.map((stop, index) => <option key={`${stop}-${index}`} value={index}>{stop}</option>)}
+                  {currentDirection.stops.map((stop, index) => <option key={`${stop}-${index}`} value={index}>{townForStop(stop)} — {stop}</option>)}
                 </select>
               </label>
               <div className="departure-list">{selectedStopTimes.map((time, index) => <button key={`${time}-${index}`} className="departure-chip" onClick={() => {
@@ -634,7 +634,7 @@ export default function App() {
               onUserMove={() => setFollowMapBus(false)}
               followReportId={trackedGhost?.id ?? trackedMapReport?.id ?? null}
             />
-            <div className="map-legend"><span className="legend-bus"><BusFront size={13} /></span><span>Posición compartida</span><span className="legend-status legend-status--on-time" /><span>En hora</span><span className="legend-status legend-status--late" /><span>Retraso</span><span className="legend-status legend-status--unknown" /><span>Sin dato</span><span className="legend-stop" /><span>Parada</span>{activeReports.some((report) => report.estimated) && <><span className="legend-estimated" /><span>Estimado (sin señal reciente)</span></>}{showGhosts && <><span className="legend-ghost"><Ghost size={11} /></span><span>Fantasma · sin verificar</span></>}</div>
+            <div className="map-legend"><span className="legend-bus"><BusGarrafIcon size={20} /></span><span>Posición compartida</span><span className="legend-status legend-status--on-time" /><span>En hora</span><span className="legend-status legend-status--late" /><span>Retraso</span><span className="legend-status legend-status--unknown" /><span>Sin dato</span><span className="legend-stop" /><span>Parada</span>{activeReports.some((report) => report.estimated) && <><span className="legend-estimated" /><span>Estimado (sin señal reciente)</span></>}{showGhosts && <><span className="legend-ghost"><Ghost size={11} /></span><span>Fantasma · sin verificar</span></>}</div>
           </div>
           <p className="map-footnote">El retraso y la próxima parada se estiman comparando el GPS con el horario publicado; si no se identifica una salida compatible, aparecerá «Sin dato». No son datos oficiales y pueden variar por tráfico o paradas. Las 16 paradas usan ubicaciones de datos públicos; el trazado sigue las calles entre paradas. Los buses fantasma son solo una estimación del horario y no están verificados.</p>
         </section>
@@ -649,7 +649,7 @@ export default function App() {
               {activeReports.map((report) => <ReportCard key={report.id} report={report} own={report.containsOwn} />)}
             </div>
           ) : (
-            <div className="empty-state"><span className="empty-icon"><BusFront size={21} /></span><div><strong>Sé la primera señal</strong><p>Si ya estás a bordo, comparte la ubicación del bus para ayudar a quienes esperan.</p></div></div>
+            <div className="empty-state"><span className="empty-icon"><BusGarrafIcon size={39} /></span><div><strong>Sé la primera señal</strong><p>Si ya estás a bordo, comparte la ubicación del bus para ayudar a quienes esperan.</p></div></div>
           )}
           {ghosts.length > 0 && (
             <div className="ghost-block">
@@ -740,7 +740,7 @@ function ReportCard({ report, own }: { report: MapReport; own: boolean }) {
   const minutes = Math.floor(report.ageSeconds / 60);
   const age = report.ageSeconds < 60 ? "ahora" : `hace ${minutes} min`;
   return <article className={`report-card${report.estimated ? " report-card--estimated" : ""}`}>
-    <span className="report-bus"><BusFront size={19} /></span>
+    <span className="report-bus"><BusGarrafIcon size={37} /></span>
     <div className="report-main"><div className="report-title"><strong>Bus en ruta{report.supportCount > 1 ? ` · ${report.supportCount} avisos` : ""}</strong>{own && <span className="mine-pill">TU SEÑAL</span>}{report.estimated && <span className="estimate-pill">POSICIÓN ESTIMADA</span>}</div>
       {report.estimated && <p className="estimate-note">Última posición real hace {minutes} min{report.previousStop && report.nextStop ? <>; según el horario, ahora estaría entre <strong>{report.previousStop}</strong> y <strong>{report.nextStop}</strong></> : ""}. Es una estimación: puede no ser exacta.</p>}
       <div className="report-meta">{report.estimated ? null : <span><span className="fresh-dot" />{age}</span>}{report.departureTime && <span>Salida {report.departureTime}</span>}{report.accuracy !== null && <span>GPS ±{Math.round(report.accuracy)} m</span>}</div>

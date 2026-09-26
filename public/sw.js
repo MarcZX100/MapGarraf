@@ -1,10 +1,8 @@
-const CACHE_NAME = "mapgarraf-shell-v2";
+const CACHE_NAME = "mapgarraf-shell-v3";
 const PRE_CACHE = self.__WB_MANIFEST.map((asset) => asset.url);
 
 self.addEventListener("install", (event) => {
-  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll([
-    "/", "/manifest.webmanifest", "/icon.svg", "/icon-192.png", "/icon-512.png", "/icon-maskable-192.png", "/icon-maskable-512.png", "/apple-touch-icon.png", ...PRE_CACHE,
-  ])));
+  event.waitUntil(caches.open(CACHE_NAME).then((cache) => cache.addAll(["/", ...PRE_CACHE])));
   self.skipWaiting();
 });
 
