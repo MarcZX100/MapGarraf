@@ -73,8 +73,31 @@ app.use((req, res, next) => {
   next();
 });
 
-const readLimiter = rateLimit({ windowMs: 60_000, limit: 120, standardHeaders: "draft-8", legacyHeaders: false });
-const writeLimiter = rateLimit({ windowMs: 60_000, limit: 30, standardHeaders: "draft-8", legacyHeaders: false });
+function rateLimitHandler(message) {
+  return (req, res, _next, options) => {
+    const resetTime = req.rateLimit?.resetTime;
+    const retryAfterSeconds = resetTime ? Math.max(1, Math.ceil((resetTime.getTime() - Date.now()) / 1000)) : 60;
+    res.setHeader("Retry-After", String(retryAfterSeconds));
+    res.status(options.statusCode).json({ error: message, retryAfterSeconds });
+  };
+}
+
+// Many mobile carriers put several travelers behind one public IP. Keep IP-level
+// limits high enough for normal map polling and GPS updates from those shared IPs.
+const readLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 1_200,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  handler: rateLimitHandler("Se han recibido demasiadas consultas del mapa desde esta conexión. Espera unos segundos e inténtalo de nuevo."),
+});
+const writeLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 600,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  handler: rateLimitHandler("Se han recibido demasiadas actualizaciones desde esta conexión. Espera unos segundos e inténtalo de nuevo."),
+});
 app.use("/api", readLimiter);
 
 const reportInput = z.object({
