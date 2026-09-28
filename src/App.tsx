@@ -36,7 +36,7 @@ type ShareSession = { id: string; token: string };
 type Draft = { departureTime: string; occupancy: Occupancy };
 type MapReport = BusReport & { supportCount: number; containsOwn: boolean };
 
-// The server flags a position as live for 3 minutes; older ones are only served so the map can estimate.
+// The server flags a position as live for 1 minute; older ones are only served so the map can estimate.
 const LIVE_REPORT_SECONDS = 60;
 const ESTIMATED_REPORT_MATCH_DISTANCE_M = 2_500;
 type ApiError = Error & { status?: number };
@@ -547,7 +547,7 @@ export default function App() {
           )}
           <details className="privacy-details">
             <summary>Privacidad y seguridad</summary>
-            <p>Solo enviamos ubicación tras pulsar compartir y aceptar el permiso del navegador. El punto y los detalles opcionales son visibles para quien abra el mapa; no se crea una cuenta ni guardamos un historial de trayectos. Si cierras la app sin detenerlo, el mapa deja de mostrar tu punto exacto a los 3 min y estima por dónde va el bus según el horario; tu última posición exacta sigue siendo accesible públicamente hasta 20 min y se borra del servidor en un máximo de 24 h. Pulsar «Dejar de compartir» la borra al instante. El mapa solicita imágenes de OpenStreetMap, pero no le enviamos tu GPS. Úsalo como pasajero, nunca mientras conduces.</p>
+            <p>Solo enviamos ubicación tras pulsar compartir y aceptar el permiso del navegador. El punto y los detalles opcionales son visibles para quien abra el mapa; no se crea una cuenta ni guardamos un historial de trayectos. Si cierras la app sin detenerlo, el mapa deja de mostrar tu punto exacto al minuto y estima por dónde va el bus según el horario; tu última posición exacta sigue siendo accesible públicamente hasta 20 min y se borra del servidor en un máximo de 24 h. Pulsar «Dejar de compartir» la borra al instante. El mapa solicita imágenes de OpenStreetMap, pero no le enviamos tu GPS. Úsalo como pasajero, nunca mientras conduces.</p>
           </details>
           <button className="options-toggle" aria-expanded={showOptions} onClick={() => setShowOptions((value) => !value)}>
             {showOptions ? "Ocultar opciones" : "Añadir detalles útiles (opcional)"}<ChevronDown size={15} className={showOptions ? "rotate" : ""} />
@@ -678,7 +678,16 @@ export default function App() {
         </section>
 
         <section className="trust-card"><div className="trust-icon"><Compass size={19} /></div><div><strong>Una herramienta independiente</strong><p>No está afiliada a BusGarraf ni recibe datos del operador. Las posiciones son aportaciones voluntarias y no oficiales.</p></div></section>
-        <footer className="page-footer"><span>Hecho para viajar mejor por el Garraf.</span><a href="https://busgarraf.cat/es/" target="_blank" rel="noreferrer">Web oficial <ExternalLink size={13} /></a></footer>
+        <footer className="page-footer">
+          <span>Hecho para viajar mejor por el Garraf.</span>
+          <nav aria-label="Información legal" className="page-footer-links">
+            <a href="/terms.html">Condiciones</a>
+            <a href="/privacy.html">Privacidad</a>
+            <a href="/cookies.html">Cookies</a>
+            <button type="button" data-cookie-settings>Configurar cookies</button>
+            <a href="https://busgarraf.cat/es/" target="_blank" rel="noreferrer">Web oficial <ExternalLink size={13} /></a>
+          </nav>
+        </footer>
         </div>
         </section>
 

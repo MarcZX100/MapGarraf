@@ -1,0 +1,13 @@
+:root { color-scheme: light; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #172b3f; background: #f4f7fa; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 32px 16px; }
+main { width: min(100%, 780px); margin: 0 auto; padding: clamp(22px, 5vw, 42px); border: 1px solid #dce5ed; border-radius: 20px; background: #fff; box-shadow: 0 12px 36px rgb(13 37 62 / 8%); }
+a { color: #145da0; }
+h1 { margin: 0 0 8px; font-size: clamp(27px, 6vw, 38px); letter-spacing: -.04em; }
+h2 { margin: 28px 0 8px; font-size: 19px; }
+p, li { color: #40556a; line-height: 1.65; }
+.eyebrow { margin: 0 0 8px; color: #58738d; font-size: 12px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; }
+.updated { margin: 0 0 24px; color: #718398; font-size: 13px; }
+.notice { padding: 13px 15px; border-left: 4px solid #cb8a25; border-radius: 5px; background: #fff7e8; color: #60410c; }
+nav { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-top: 34px; padding-top: 18px; border-top: 1px solid #e4eaf0; font-size: 14px; }
+@media (prefers-color-scheme: dark) { :root { color-scheme: dark; color: #edf4ff; background: #081426; } main { border-color: #263d5d; background: #101e33; } p, li { color: #bdcde0; } .updated, .eyebrow { color: #9aafc8; } .notice { border-color: #d99b38; background: #352b1d; color: #f4d9a8; } a { color: #9ccaff; } nav { border-color: #263d5d; } }

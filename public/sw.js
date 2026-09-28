@@ -1,4 +1,4 @@
-const CACHE_NAME = "mapgarraf-shell-v3";
+const CACHE_NAME = "mapgarraf-shell-v4";
 const PRE_CACHE = self.__WB_MANIFEST.map((asset) => asset.url);
 
 self.addEventListener("install", (event) => {
