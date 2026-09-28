@@ -128,7 +128,7 @@ h1 span { color: var(--teal); }
 .leaflet-control-zoom a { width: 30px !important; height: 30px !important; line-height: 29px !important; color: #2f514c !important; }
 .leaflet-tooltip { border: 0 !important; border-radius: 6px !important; padding: 4px 7px !important; color: #405753 !important; font-size: 9px !important; font-weight: 600; box-shadow: 0 2px 7px rgb(15 40 34 / 15%) !important; }
 .bus-map-icon-wrap { border: 0; background: transparent; }
-.bus-map-marker { position: relative; width: 128px; height: 74px; display: block; }
+.bus-map-marker { position: relative; width: 128px; height: 90px; display: block; }
 .bus-map-status { position: absolute; top: 0; left: 50%; max-width: 124px; padding: 4px 7px; overflow: hidden; border: 1px solid transparent; border-radius: 999px; background: #fff; box-shadow: 0 2px 8px rgb(24 44 43 / 18%); font-size: 9px; font-weight: 800; line-height: 1.1; text-overflow: ellipsis; white-space: nowrap; transform: translateX(-50%); }
 .bus-map-status--on-time { border-color: #a7d9bf; color: #176a49; }
 .bus-map-status--early { border-color: #a8d8d3; color: #116a64; }
