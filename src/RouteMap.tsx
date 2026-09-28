@@ -50,6 +50,7 @@ export default function RouteMap({ direction, stops, timetable, reports, ghosts,
   const ghostMarkersRef = useRef(new Map<string, L.Marker>());
   const reportMarkersRef = useRef(new Map<string, { marker: L.Marker; circle: L.Circle | null }>());
   const compactViewRef = useRef<{ center: L.LatLng; zoom: number } | null>(null);
+  const followZoomRef = useRef<number | null>(null);
   const wasExpandedRef = useRef(false);
   const programmaticMoveRef = useRef(false);
   const onUserMoveRef = useRef(onUserMove);
@@ -59,7 +60,7 @@ export default function RouteMap({ direction, stops, timetable, reports, ghosts,
 
   useEffect(() => {
     if (!elementRef.current || mapRef.current) return;
-    const map = L.map(elementRef.current, { zoomControl: false, scrollWheelZoom: false, attributionControl: true });
+    const map = L.map(elementRef.current, { zoomControl: false, scrollWheelZoom: true, touchZoom: true, attributionControl: true });
     L.tileLayer(import.meta.env.VITE_TILE_URL || "https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · Rutas: <a href="https://project-osrm.org/">OSRM</a>',
@@ -70,10 +71,12 @@ export default function RouteMap({ direction, stops, timetable, reports, ghosts,
     ghostLayersRef.current = L.layerGroup().addTo(map);
     reportLayersRef.current = L.layerGroup().addTo(map);
     map.setView([41.18, 1.48], 9);
-    // Any drag, pinch, wheel or zoom-button move made by the user stops following the bus.
+    // Dragging stops following the bus; changing zoom keeps the follow active.
     // Moves the app makes itself are flagged so they are not mistaken for the user.
     map.on("dragstart", () => onUserMoveRef.current());
-    map.on("zoomstart", () => { if (!programmaticMoveRef.current) onUserMoveRef.current(); });
+    map.on("zoomend", () => {
+      if (followZoomRef.current !== null && !programmaticMoveRef.current) followZoomRef.current = map.getZoom();
+    });
     map.on("moveend", () => { programmaticMoveRef.current = false; });
     const frame = window.requestAnimationFrame(() => map.invalidateSize({ pan: false }));
     return () => {
@@ -208,8 +211,10 @@ export default function RouteMap({ direction, stops, timetable, reports, ghosts,
     const target = reports.find((candidate) => candidate.id === followReportId) ?? ghosts.find((candidate) => candidate.id === followReportId);
     if (!target) return;
     const point = L.latLng(target.latitude, target.longitude);
-    const zoom = Math.max(map.getZoom(), 15);
-    if (map.getCenter().distanceTo(point) > 15 || map.getZoom() < zoom) {
+    // Start close to the bus once, then keep the user's chosen zoom across GPS refreshes.
+    const zoom = followZoomRef.current ?? Math.max(map.getZoom(), 15);
+    followZoomRef.current = zoom;
+    if (map.getCenter().distanceTo(point) > 15 || Math.abs(map.getZoom() - zoom) > 0.01) {
       programmaticMoveRef.current = true;
       map.flyTo(point, zoom, { animate: true, duration: 0.55 });
     }
