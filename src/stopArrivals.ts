@@ -23,6 +23,13 @@ function formatClock(minutes: number) {
   return `${String(Math.floor(total / 60) % 24).padStart(2, "0")}:${String(total % 60).padStart(2, "0")}`;
 }
 
+/** All published weekday passage times at one stop, in timetable order. */
+export function getTheoreticalPassageTimes(timetable: Timetable, stopIndex: number): string[] {
+  const offset = timetable.stopOffsets[stopIndex];
+  if (offset === undefined) return [];
+  return timetable.departures.map((departure) => formatClock(clockMinutes(departure) + offset));
+}
+
 /** Next weekday timetable passage at a stop, if there is one left today. */
 export function getNextTheoreticalArrival(timetable: Timetable, stopIndex: number, now: Date): StopArrivalEstimate | null {
   const clock = madridClock(now);

@@ -1,9 +1,10 @@
 import type { GhostBus } from "./ghostBuses";
 import { useEffect, useRef } from "react";
 import L from "leaflet";
-import { type Direction, type RouteStop } from "./data";
+import { type Direction, type RouteStop, type Timetable } from "./data";
 import { roadShapeByDirection } from "./routeShapes";
 import { getReportStatus } from "./reportStatus";
+import { getNextSharedArrival, getNextTheoreticalArrival, getTheoreticalPassageTimes } from "./stopArrivals";
 
 export type BusReport = {
   id: string;
@@ -31,6 +32,7 @@ export type BusReport = {
 type Props = {
   direction: Direction;
   stops: RouteStop[];
+  timetable: Timetable;
   reports: BusReport[];
   ghosts: GhostBus[];
   expanded: boolean;
@@ -39,7 +41,7 @@ type Props = {
   onUserMove: () => void;
 };
 
-export default function RouteMap({ direction, stops, reports, ghosts, expanded, followBus, followReportId, onUserMove }: Props) {
+export default function RouteMap({ direction, stops, timetable, reports, ghosts, expanded, followBus, followReportId, onUserMove }: Props) {
   const elementRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const routeLayersRef = useRef<L.LayerGroup | null>(null);
@@ -52,6 +54,8 @@ export default function RouteMap({ direction, stops, reports, ghosts, expanded, 
   const programmaticMoveRef = useRef(false);
   const onUserMoveRef = useRef(onUserMove);
   onUserMoveRef.current = onUserMove;
+  const stopPopupDataRef = useRef({ timetable, reports });
+  stopPopupDataRef.current = { timetable, reports };
 
   useEffect(() => {
     if (!elementRef.current || mapRef.current) return;
@@ -95,14 +99,16 @@ export default function RouteMap({ direction, stops, reports, ghosts, expanded, 
     L.polyline(roadPoints, { color: "#739cd2", weight: 5, opacity: 0.9, lineCap: "round", lineJoin: "round" }).addTo(layers);
     for (const [index, stop] of orderedStops.entries()) {
       const point = stop.coordinates[direction];
-      const stopName = `<strong>${index + 1}. ${escapeHtml(stop.name)}</strong><br>${escapeHtml(stop.town)}`;
       // Keep the visible dot small while giving map taps a much larger hit area.
       L.circleMarker([point.lat, point.lng], {
-        radius: 13,
+        radius: 16,
         stroke: false,
         fillColor: "#003c8c",
         fillOpacity: 0.001,
-      }).bindPopup(stopName).addTo(layers);
+      }).bindPopup(() => {
+        const popupData = stopPopupDataRef.current;
+        return stopPopupHtml(index, stop, popupData.timetable, popupData.reports, new Date());
+      }, { maxWidth: 320, minWidth: 240 }).addTo(layers);
       L.circleMarker([point.lat, point.lng], {
         radius: 5,
         color: "#ffffff",
@@ -270,6 +276,27 @@ function ghostPopupHtml(ghost: GhostBus) {
     ? `Según el horario, saldría de ${escapeHtml(ghost.previousStop)} a las ${escapeHtml(ghost.departureTime)} (en ${ghost.departsInMinutes} min).`
     : `Según el horario, ahora estaría entre ${escapeHtml(ghost.previousStop)} y ${escapeHtml(ghost.nextStop)}.`;
   return `<strong>Bus fantasma · salida ${escapeHtml(ghost.departureTime)}</strong><br><span class="popup-status popup-status--ghost">SIN VERIFICAR</span><br>${where}<br><small>Es solo una estimación del horario: nadie ha confirmado que este bus exista ni dónde está.</small>`;
+}
+
+function stopPopupHtml(index: number, stop: RouteStop, timetable: Timetable, reports: BusReport[], now: Date) {
+  const theoretical = getNextTheoreticalArrival(timetable, index, now);
+  const shared = getNextSharedArrival(timetable, index, reports, now);
+  const passageTimes = getTheoreticalPassageTimes(timetable, index);
+  const theoreticalSummary = theoretical
+    ? `<strong>${escapeHtml(theoretical.time)}</strong> · ${theoretical.minutesUntil === 0 ? "ahora" : `en ~${theoretical.minutesUntil} min`}`
+    : "Sin pasos pendientes hoy.";
+  const sharedSummary = shared
+    ? `<strong>${escapeHtml(shared.time)}</strong> · ${shared.minutesUntil === 0 ? "ahora" : `en ~${shared.minutesUntil} min`} · ${shared.estimated ? "posición proyectada" : "GPS compartido"}`
+    : "No hay una ubicación compartida con ETA para esta parada.";
+  const timesHtml = passageTimes.map((time) => `<span>${escapeHtml(time)}</span>`).join("");
+
+  return `<div class="stop-popup">
+    <strong class="stop-popup-title">${index + 1}. ${escapeHtml(stop.name)}</strong>
+    <span class="stop-popup-town">${escapeHtml(stop.town)}</span>
+    <div class="stop-popup-section"><span class="stop-popup-label">Siguiente según horario</span><div>${theoreticalSummary}</div></div>
+    <div class="stop-popup-section"><span class="stop-popup-label">Siguiente según ubicación compartida</span><div>${sharedSummary}</div></div>
+    <div class="stop-popup-section"><span class="stop-popup-label">Pasos publicados · laborables</span><div class="stop-popup-times">${timesHtml || "Horario no disponible."}</div></div>
+  </div>`;
 }
 
 function escapeHtml(value: string) {

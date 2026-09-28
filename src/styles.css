@@ -151,6 +151,12 @@ h1 span { color: var(--teal); }
 .leaflet-popup-content .popup-status--late { color: #a33c31; }
 .leaflet-popup-content .popup-status--unknown { color: #61716c; }
 .leaflet-popup-content small { color: #71817e; }
+.leaflet-popup-content .stop-popup-title { display: block; font-size: 14px; }
+.leaflet-popup-content .stop-popup-town { display: block; margin-top: 1px; color: #71817e; font-size: 11px; }
+.leaflet-popup-content .stop-popup-section { margin-top: 9px; padding-top: 7px; border-top: 1px solid #e8ede9; font-size: 11px; line-height: 1.45; }
+.leaflet-popup-content .stop-popup-label { display: block; margin-bottom: 2px; color: #71817e; font-size: 9px; font-weight: 700; letter-spacing: .25px; text-transform: uppercase; }
+.leaflet-popup-content .stop-popup-times { display: flex; flex-wrap: wrap; gap: 4px; }
+.leaflet-popup-content .stop-popup-times span { padding: 2px 5px; border: 1px solid #e3eae5; border-radius: 5px; background: #f7faf8; font-variant-numeric: tabular-nums; font-size: 10px; }
 .map-legend { min-height: 38px; padding: 7px 12px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px 7px; color: #73817c; font-size: 9px; }
 .legend-bus { width: 20px; height: 20px; border-radius: 0; display: grid; place-items: center; background: transparent; color: #003c8c; }
 .legend-status { width: 8px; height: 8px; margin-left: 4px; border-radius: 50%; }
@@ -286,6 +292,8 @@ h1 span { color: var(--teal); }
 [data-theme="dark"] .leaflet-control-zoom a { background: #16221f !important; color: #cfe0db !important; border-bottom-color: #2c3f3a !important; }
 [data-theme="dark"] .leaflet-tooltip { background: #16221f !important; color: #cfe0db !important; }
 [data-theme="dark"] .leaflet-popup-content-wrapper, [data-theme="dark"] .leaflet-popup-tip { background: #16221f; color: #e3eeeb; }
+[data-theme="dark"] .leaflet-popup-content .stop-popup-section { border-color: #2a3833; }
+[data-theme="dark"] .leaflet-popup-content .stop-popup-times span { border-color: #2a3833; background: #1b2b26; }
 [data-theme="dark"] .bus-map-status { background: #16221f; }
 [data-theme="dark"] .bus-map-status--on-time, [data-theme="dark"] .leaflet-popup-content .popup-status--on-time { border-color: #23503a; color: #7ad3a0; }
 [data-theme="dark"] .bus-map-status--early, [data-theme="dark"] .leaflet-popup-content .popup-status--early { border-color: #1f4f4a; color: #76d3cb; }

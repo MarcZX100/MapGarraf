@@ -641,6 +641,7 @@ export default function App() {
             <RouteMap
               direction={direction}
               stops={stops}
+              timetable={currentDirection}
               reports={activeReports}
               ghosts={ghosts}
               expanded={mapExpanded}
