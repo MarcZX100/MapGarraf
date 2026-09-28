@@ -111,7 +111,7 @@ export default function RouteMap({ direction, stops, timetable, reports, ghosts,
       }).bindPopup(() => {
         const popupData = stopPopupDataRef.current;
         return stopPopupHtml(index, stop, popupData.timetable, popupData.reports, new Date());
-      }, { maxWidth: 320, minWidth: 240 }).addTo(layers);
+      }, { maxWidth: 320, minWidth: 240, offset: L.point(0, -14) }).addTo(layers);
       L.circleMarker([point.lat, point.lng], {
         radius: 5,
         color: "#ffffff",
@@ -238,6 +238,7 @@ function reportIcon(report: BusReport) {
     </span>`,
     iconSize: [128, 90],
     iconAnchor: [64, 88],
+    popupAnchor: [0, -46],
   });
 }
 
@@ -273,6 +274,7 @@ function ghostIcon(ghost: GhostBus) {
     </span>`,
     iconSize: [128, 90],
     iconAnchor: [64, 88],
+    popupAnchor: [0, -46],
   });
 }
 
