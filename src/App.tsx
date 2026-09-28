@@ -29,6 +29,7 @@ import RouteMap, { type BusReport } from "./RouteMap";
 import { directionLabel, officialScheduleUrl, officialTariffUrl, publishedPdfUrl, stops, timetables, type Direction } from "./data";
 import { getReportStatus } from "./reportStatus";
 import { estimateCurrentPosition, estimateRouteStatus, getGhostBuses, ghostsApplyToday, unclaimedGhosts, type GhostBus } from "./ghostBuses";
+import { getNextSharedArrival, getNextTheoreticalArrival } from "./stopArrivals";
 
 type Occupancy = "low" | "medium" | "high" | null;
 type ShareSession = { id: string; token: string };
@@ -37,6 +38,7 @@ type MapReport = BusReport & { supportCount: number; containsOwn: boolean };
 
 // The server flags a position as live for 3 minutes; older ones are only served so the map can estimate.
 const LIVE_REPORT_SECONDS = 180;
+const ESTIMATED_REPORT_MATCH_DISTANCE_M = 2_500;
 type ApiError = Error & { status?: number };
 type InstallPrompt = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: "accepted" | "dismissed" }> };
 
@@ -62,6 +64,7 @@ export default function App() {
   const [showOptions, setShowOptions] = useState(false);
   const [showInstallHelp, setShowInstallHelp] = useState(false);
   const [scheduleStopIndex, setScheduleStopIndex] = useState(0);
+  const [expandedStopIndex, setExpandedStopIndex] = useState<number | null>(null);
   const [mapExpanded, setMapExpanded] = useState(false);
   const [followMapBus, setFollowMapBus] = useState(true);
   const [trackedMapBusId, setTrackedMapBusId] = useState<string | null>(null);
@@ -170,7 +173,12 @@ export default function App() {
     const current = reports
       .filter((report) => report.direction === direction)
       .map((report) => ({ ...report, ageSeconds: report.ageSeconds + Math.max(0, (nowMs - (report.receivedAt ?? nowMs)) / 1000) }));
-    return aggregateReports(current, myReportId).flatMap((report): MapReport[] => {
+    const tripByReportId = new Map(current.map((report) => [report.id, estimateRouteStatus(direction, report, now).tripDepartureTime]));
+    const freshReports = current.filter((report) => report.ageSeconds <= LIVE_REPORT_SECONDS);
+    const currentWithoutReplacedEstimates = current.filter((report) =>
+      report.ageSeconds <= LIVE_REPORT_SECONDS || !isReplacedByFreshReport(report, freshReports, direction, tripByReportId),
+    );
+    return aggregateReports(currentWithoutReplacedEstimates, myReportId, direction, tripByReportId).flatMap((report): MapReport[] => {
       let displayedPosition = { latitude: report.latitude, longitude: report.longitude };
       let estimatedPosition: ReturnType<typeof estimateCurrentPosition> = null;
       if (report.ageSeconds > LIVE_REPORT_SECONDS) {
@@ -185,6 +193,7 @@ export default function App() {
         ...(estimatedPosition ? { ...estimatedPosition, accuracy: null, estimated: true } : {}),
         delayMinutes: timing.delayMinutes,
         delayBasis: timing.delayBasis,
+        tripDepartureTime: timing.tripDepartureTime,
         nextStop: timing.nextStop ?? estimatedPosition?.nextStop,
         minutesToNextStop: timing.minutesToNextStop,
       }];
@@ -200,7 +209,7 @@ export default function App() {
     () => (showGhosts ? unclaimedGhosts(
       getGhostBuses(direction, now),
       // An estimate is where the bus is right now, so it counts as a zero-age position.
-      activeReports.map((report) => ({ latitude: report.latitude, longitude: report.longitude, departureTime: report.departureTime, delayMinutes: report.delayMinutes, ageSeconds: report.estimated ? 0 : report.ageSeconds })),
+      activeReports.map((report) => ({ latitude: report.latitude, longitude: report.longitude, departureTime: report.tripDepartureTime ?? report.departureTime, delayMinutes: report.delayMinutes, ageSeconds: report.estimated ? 0 : report.ageSeconds })),
       direction,
       now,
     ) : []),
@@ -223,6 +232,10 @@ export default function App() {
   const trackedMapReport = trackedGhost ? null : (activeReports.find((report) => report.id === trackedMapBusId) ?? activeReports[0] ?? null);
   const currentDirection = timetables[direction];
   const selectedStopTimes = currentDirection.departures.map((time) => shiftClock(time, currentDirection.stopOffsets[scheduleStopIndex] || 0));
+  const stopArrivals = useMemo(() => currentDirection.stops.map((_, index) => ({
+    theoretical: getNextTheoreticalArrival(currentDirection, index, now),
+    shared: getNextSharedArrival(currentDirection, index, activeReports, now),
+  })), [currentDirection, activeReports, now]);
 
   useEffect(() => {
     if (!mapExpanded) return;
@@ -430,6 +443,7 @@ export default function App() {
     if (shareState !== "idle" || next === direction) return;
     setDirection(next);
     setScheduleStopIndex(0);
+    setExpandedStopIndex(null);
     setNotice("");
   }
 
@@ -673,7 +687,46 @@ export default function App() {
             {directionCard}
             <section className="detail-panel stops-panel">
               <div className="detail-title"><div><h3>16 paradas</h3></div><MapPin size={19} /></div>
-              <ol className="stops-list">{currentDirection.stops.map((stop, index) => <li key={`${stop}-${index}`}><span className="stop-index">{index + 1}</span><span><strong>{stop}</strong><small>{townForStop(stop)}</small></span></li>)}</ol>
+              <p className="schedule-caption stops-caption">Toca una parada para ver todos sus pasos teóricos y la próxima llegada calculada.</p>
+              <ol className="stops-list">{currentDirection.stops.map((stop, index) => {
+                const isExpanded = expandedStopIndex === index;
+                const arrival = stopArrivals[index];
+                const preview = arrival.shared && arrival.theoretical
+                  ? arrival.shared.minutesUntil <= arrival.theoretical.minutesUntil ? arrival.shared : arrival.theoretical
+                  : arrival.shared ?? arrival.theoretical;
+                const passageTimes = currentDirection.departures.map((departure) => shiftClock(departure, currentDirection.stopOffsets[index]));
+                return <li key={`${stop}-${index}`} className={isExpanded ? "is-expanded" : ""}>
+                  <button
+                    className="stop-row"
+                    type="button"
+                    aria-expanded={isExpanded}
+                    onClick={() => setExpandedStopIndex((current) => current === index ? null : index)}
+                  >
+                    <span className="stop-index">{index + 1}</span>
+                    <span className="stop-row-copy"><strong>{stop}</strong><small>{townForStop(stop)}</small></span>
+                    <span className="stop-row-next"><small>{preview && preview === arrival.shared ? "GPS" : "Horario"}</small><strong>{preview?.time ?? "—"}</strong></span>
+                    <ChevronDown size={17} className={`stop-row-chevron${isExpanded ? " rotate" : ""}`} />
+                  </button>
+                  {isExpanded && <div className="stop-arrivals">
+                    <div className="stop-estimate-row">
+                      <span>Próximo paso por horario</span>
+                      {arrival.theoretical
+                        ? <strong>{arrival.theoretical.time}<small>en ~{arrival.theoretical.minutesUntil} min · días laborables</small></strong>
+                        : <strong>{ghostsToday ? "Sin más pasos hoy" : "Sin horario hoy"}<small>El horario publicado es de lunes a viernes</small></strong>}
+                    </div>
+                    <div className="stop-estimate-row">
+                      <span>Llegada calculada</span>
+                      {arrival.shared
+                        ? <strong>~{arrival.shared.time}<small>en ~{arrival.shared.minutesUntil} min · GPS y horario{arrival.shared.estimated ? " · posición proyectada" : ""}</small></strong>
+                        : <strong>Sin bus compartido próximo<small>Se calcula cuando hay una posición compartida en ruta</small></strong>}
+                    </div>
+                    <div className="stop-passage-list">
+                      <div><strong>Pasos teóricos</strong><small>Horario de lunes a viernes</small></div>
+                      <div className="passage-times">{passageTimes.map((time, timeIndex) => <span className="passage-time" key={`${time}-${timeIndex}`}>{time}</span>)}</div>
+                    </div>
+                  </div>}
+                </li>;
+              })}</ol>
               <p className="map-footnote">Las ubicaciones exactas pueden variar; consulta la web de BusGarraf para confirmar la parada.</p>
             </section>
           </div>
@@ -751,14 +804,26 @@ function ReportCard({ report, own }: { report: MapReport; own: boolean }) {
   </article>;
 }
 
-function aggregateReports(reports: BusReport[], ownId: string | null): MapReport[] {
+function aggregateReports(reports: BusReport[], ownId: string | null, direction: Direction, tripByReportId: Map<string, string | null>): MapReport[] {
   const groups: BusReport[][] = [];
   for (const report of [...reports].sort((a, b) => a.ageSeconds - b.ageSeconds)) {
     const group = groups.find((candidate) => {
-      const first = candidate[0];
-      if (Math.abs(first.ageSeconds - report.ageSeconds) > 45) return false;
-      if (first.departureTime && report.departureTime && first.departureTime !== report.departureTime) return false;
-      return distanceMeters(first.latitude, first.longitude, report.latitude, report.longitude) < 200;
+      return candidate.some((first) => {
+        const firstTrip = tripByReportId.get(first.id);
+        const reportTrip = tripByReportId.get(report.id);
+        if (firstTrip && reportTrip && firstTrip === reportTrip) return true;
+        if (first.departureTime && report.departureTime && first.departureTime === report.departureTime) return true;
+
+        const differentDeclaredTrips = first.departureTime && report.departureTime && first.departureTime !== report.departureTime;
+        if (!differentDeclaredTrips && Math.abs(first.ageSeconds - report.ageSeconds) <= 45
+          && distanceMeters(first.latitude, first.longitude, report.latitude, report.longitude) < 200) return true;
+
+        if (Math.max(first.ageSeconds, report.ageSeconds) <= LIVE_REPORT_SECONDS) return false;
+        const firstPosition = estimateCurrentPosition(direction, first) ?? first;
+        const reportPosition = estimateCurrentPosition(direction, report) ?? report;
+        return distanceMeters(firstPosition.latitude, firstPosition.longitude, reportPosition.latitude, reportPosition.longitude)
+          <= ESTIMATED_REPORT_MATCH_DISTANCE_M;
+      });
     });
     if (group) group.push(report);
     else groups.push([report]);
@@ -774,11 +839,12 @@ function aggregateReports(reports: BusReport[], ownId: string | null): MapReport
     };
     return {
       ...freshest,
-      latitude: group.reduce((total, report) => total + report.latitude, 0) / group.length,
-      longitude: group.reduce((total, report) => total + report.longitude, 0) / group.length,
-      accuracy: accuracies.length ? Math.round(accuracies.reduce((total, value) => total + value, 0) / accuracies.length) : null,
-      departureTime: counts(group.map((report) => report.departureTime)),
-      occupancy: counts(group.map((report) => report.occupancy)),
+      // A grouped bus should sit at its freshest report, never between two GPS fixes.
+      latitude: freshest.latitude,
+      longitude: freshest.longitude,
+      accuracy: freshest.accuracy ?? (accuracies.length ? Math.round(accuracies.reduce((total, value) => total + value, 0) / accuracies.length) : null),
+      departureTime: freshest.departureTime,
+      occupancy: freshest.occupancy ?? counts(group.map((report) => report.occupancy)),
       supportCount: group.length,
       containsOwn: group.some((report) => report.id === ownId),
     };
@@ -802,6 +868,25 @@ function distanceMeters(lat1: number, lng1: number, lat2: number, lng2: number) 
   const dLng = radians(lng2 - lng1);
   const a = Math.sin(dLat / 2) ** 2 + Math.cos(radians(lat1)) * Math.cos(radians(lat2)) * Math.sin(dLng / 2) ** 2;
   return 12_742_000 * Math.asin(Math.sqrt(a));
+}
+
+function isReplacedByFreshReport(stale: BusReport, freshReports: BusReport[], direction: Direction, tripByReportId: Map<string, string | null>) {
+  const stalePosition = estimateCurrentPosition(direction, stale);
+  if (!stalePosition) return false;
+  const staleTrip = tripByReportId.get(stale.id);
+
+  return freshReports.some((fresh) => {
+    if (fresh.ageSeconds >= stale.ageSeconds) return false;
+    if (stale.departureTime && fresh.departureTime && stale.departureTime === fresh.departureTime) return true;
+    const freshTrip = tripByReportId.get(fresh.id);
+    if (staleTrip && freshTrip && staleTrip === freshTrip) return true;
+
+    // A fresh GPS report can use a different departure label and still be the same
+    // trip. Compare both signals projected to now, then prefer the fresh location.
+    const freshPosition = estimateCurrentPosition(direction, fresh) ?? fresh;
+    return distanceMeters(stalePosition.latitude, stalePosition.longitude, freshPosition.latitude, freshPosition.longitude)
+      <= ESTIMATED_REPORT_MATCH_DISTANCE_M;
+  });
 }
 
 function shiftClock(time: string, offsetMinutes: number) {

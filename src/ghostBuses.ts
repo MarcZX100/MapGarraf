@@ -45,6 +45,8 @@ type RouteModel = {
 };
 
 export type RouteEstimate = {
+  /** Scheduled trip that best matches this GPS fix, including an inferred departure when absent. */
+  tripDepartureTime: string | null;
   delayMinutes: number | null;
   delayBasis: "selected-departure" | "inferred-departure" | null;
   nextStop: string | null;
@@ -236,9 +238,9 @@ export function estimateRouteStatus(
     ? Math.max(0, Math.round(model.offsets[nextStopIndex] - currentProgress.elapsedMinutes))
     : null;
 
-  if (!observedProgress) return { delayMinutes: null, delayBasis: null, nextStop, minutesToNextStop };
+  if (!observedProgress) return { tripDepartureTime: null, delayMinutes: null, delayBasis: null, nextStop, minutesToNextStop };
   const clock = madridClock(now);
-  if (!clock.isWeekday) return { delayMinutes: null, delayBasis: null, nextStop, minutesToNextStop };
+  if (!clock.isWeekday) return { tripDepartureTime: null, delayMinutes: null, delayBasis: null, nextStop, minutesToNextStop };
 
   // For an old fix, compare the bus with the timetable at the time the fix was
   // actually recorded, not with the clock time when this page refreshed.
@@ -246,10 +248,11 @@ export function estimateRouteStatus(
   const routeDuration = model.offsets[model.offsets.length - 1];
   if (report.departureTime) {
     const departure = model.departures.find((candidate) => candidate.label === report.departureTime);
-    if (!departure) return { delayMinutes: null, delayBasis: null, nextStop, minutesToNextStop };
+    if (!departure) return { tripDepartureTime: null, delayMinutes: null, delayBasis: null, nextStop, minutesToNextStop };
     const elapsed = observedClock - departure.minutes;
-    if (elapsed < 0 || elapsed > routeDuration + 120) return { delayMinutes: null, delayBasis: null, nextStop, minutesToNextStop };
+    if (elapsed < 0 || elapsed > routeDuration + 120) return { tripDepartureTime: null, delayMinutes: null, delayBasis: null, nextStop, minutesToNextStop };
     return {
+      tripDepartureTime: departure.label,
       delayMinutes: Math.round(elapsed - observedProgress.elapsedMinutes),
       delayBasis: "selected-departure",
       nextStop,
@@ -261,11 +264,12 @@ export function estimateRouteStatus(
     const elapsed = observedClock - departure.minutes;
     if (elapsed < 0 || elapsed > routeDuration + 90) return [];
     const delay = elapsed - observedProgress.elapsedMinutes;
-    return delay < -20 || delay > 90 ? [] : [{ delay, distanceFromSchedule: Math.abs(delay) }];
+    return delay < -20 || delay > 90 ? [] : [{ departureTime: departure.label, delay, distanceFromSchedule: Math.abs(delay) }];
   }).sort((a, b) => a.distanceFromSchedule - b.distanceFromSchedule);
   const best = candidates[0];
-  if (!best) return { delayMinutes: null, delayBasis: null, nextStop, minutesToNextStop };
+  if (!best) return { tripDepartureTime: null, delayMinutes: null, delayBasis: null, nextStop, minutesToNextStop };
   return {
+    tripDepartureTime: best.departureTime,
     delayMinutes: Math.round(best.delay),
     delayBasis: "inferred-departure",
     nextStop,

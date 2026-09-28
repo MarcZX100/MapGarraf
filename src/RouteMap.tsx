@@ -15,6 +15,7 @@ export type BusReport = {
   occupancy: "low" | "medium" | "high" | null;
   delayMinutes: number | null;
   delayBasis?: "selected-departure" | "inferred-departure" | null;
+  tripDepartureTime?: string | null;
   lastSeen: string;
   ageSeconds: number;
   supportCount?: number;
@@ -94,13 +95,22 @@ export default function RouteMap({ direction, stops, reports, ghosts, expanded, 
     L.polyline(roadPoints, { color: "#739cd2", weight: 5, opacity: 0.9, lineCap: "round", lineJoin: "round" }).addTo(layers);
     for (const [index, stop] of orderedStops.entries()) {
       const point = stop.coordinates[direction];
+      const stopName = `<strong>${index + 1}. ${escapeHtml(stop.name)}</strong><br>${escapeHtml(stop.town)}`;
+      // Keep the visible dot small while giving map taps a much larger hit area.
+      L.circleMarker([point.lat, point.lng], {
+        radius: 13,
+        stroke: false,
+        fillColor: "#003c8c",
+        fillOpacity: 0.001,
+      }).bindPopup(stopName).addTo(layers);
       L.circleMarker([point.lat, point.lng], {
         radius: 5,
         color: "#ffffff",
         weight: 2,
         fillColor: "#003c8c",
         fillOpacity: 1,
-      }).bindPopup(`<strong>${index + 1}. ${escapeHtml(stop.name)}</strong><br>${escapeHtml(stop.town)}`).addTo(layers);
+        interactive: false,
+      }).addTo(layers);
     }
 
     programmaticMoveRef.current = true;

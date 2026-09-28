@@ -7,6 +7,8 @@ export type ReportStatus = {
   explanation: string;
 };
 
+const ON_TIME_TOLERANCE_MINUTES = 5;
+
 export function getReportStatus(delayMinutes: number | null, delayBasis?: "selected-departure" | "inferred-departure" | null): ReportStatus {
   if (delayMinutes === null) {
     return {
@@ -18,10 +20,10 @@ export function getReportStatus(delayMinutes: number | null, delayBasis?: "selec
   }
 
   const explanation = delayBasis === "inferred-departure"
-    ? "Estimación automática con GPS y la salida más probable del horario; puede variar si se ha identificado otra salida."
-    : "Estimación automática comparando GPS con el horario de la salida indicada; no es un dato oficial y puede variar por tráfico.";
+    ? "Estimación automática con GPS y la salida más probable del horario; puede variar si se ha identificado otra salida. El estado «En hora» admite hasta 5 min de diferencia."
+    : "Estimación automática comparando GPS con el horario de la salida indicada; no es un dato oficial y puede variar por tráfico. El estado «En hora» admite hasta 5 min de diferencia.";
 
-  if (delayMinutes === 0) {
+  if (Math.abs(delayMinutes) <= ON_TIME_TOLERANCE_MINUTES) {
     return {
       kind: "on-time",
       label: "En hora · aprox.",
