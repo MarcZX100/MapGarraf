@@ -236,8 +236,8 @@ function reportIcon(report: BusReport) {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 16V8.5A2.5 2.5 0 0 1 7.5 6h9A2.5 2.5 0 0 1 19 8.5V16"/><path d="M5 11h14M8 16v2m8-2v2M7.5 18h9A2.5 2.5 0 0 0 19 15.5V13H5v2.5A2.5 2.5 0 0 0 7.5 18Z"/><path d="M8 8.5h.01M16 8.5h.01"/></svg>
       </span>
     </span>`,
-    iconSize: [128, 90],
-    iconAnchor: [64, 88],
+    iconSize: [128, 74],
+    iconAnchor: [64, 72],
     popupAnchor: [0, -46],
   });
 }
@@ -272,8 +272,8 @@ function ghostIcon(ghost: GhostBus) {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 10h.01"/><path d="M15 10h.01"/><path d="M12 2a8 8 0 0 0-8 8v12l3-3 2.5 2.5L12 19l2.5 2.5L17 19l3 3V10a8 8 0 0 0-8-8z"/></svg>
       </span>
     </span>`,
-    iconSize: [128, 90],
-    iconAnchor: [64, 88],
+    iconSize: [128, 74],
+    iconAnchor: [64, 72],
     popupAnchor: [0, -46],
   });
 }
