@@ -12,7 +12,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
 const port = Number(process.env.PORT || 4174);
 const dbPath = path.resolve(root, process.env.DATABASE_PATH || "./data/busgarraf.sqlite");
-const liveForMs = 3 * 60 * 1000;
+const liveForMs = 60 * 1000;
 // After liveForMs without a GPS reading the last exact position is still served, for this long,
 // so clients can estimate where the bus is now from the timetable. "Dejar de compartir" deletes it at once.
 const estimateForMs = 20 * 60 * 1000;

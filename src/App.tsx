@@ -37,7 +37,7 @@ type Draft = { departureTime: string; occupancy: Occupancy };
 type MapReport = BusReport & { supportCount: number; containsOwn: boolean };
 
 // The server flags a position as live for 3 minutes; older ones are only served so the map can estimate.
-const LIVE_REPORT_SECONDS = 180;
+const LIVE_REPORT_SECONDS = 60;
 const ESTIMATED_REPORT_MATCH_DISTANCE_M = 2_500;
 type ApiError = Error & { status?: number };
 type InstallPrompt = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: "accepted" | "dismissed" }> };
@@ -174,14 +174,14 @@ export default function App() {
       .filter((report) => report.direction === direction)
       .map((report) => ({ ...report, ageSeconds: report.ageSeconds + Math.max(0, (nowMs - (report.receivedAt ?? nowMs)) / 1000) }));
     const tripByReportId = new Map(current.map((report) => [report.id, estimateRouteStatus(direction, report, now).tripDepartureTime]));
-    const freshReports = current.filter((report) => report.ageSeconds <= LIVE_REPORT_SECONDS);
+    const freshReports = current.filter((report) => report.ageSeconds < LIVE_REPORT_SECONDS);
     const currentWithoutReplacedEstimates = current.filter((report) =>
-      report.ageSeconds <= LIVE_REPORT_SECONDS || !isReplacedByFreshReport(report, freshReports, direction, tripByReportId),
+      report.ageSeconds < LIVE_REPORT_SECONDS || !isReplacedByFreshReport(report, freshReports, direction, tripByReportId),
     );
     return aggregateReports(currentWithoutReplacedEstimates, myReportId, direction, tripByReportId).flatMap((report): MapReport[] => {
       let displayedPosition = { latitude: report.latitude, longitude: report.longitude };
       let estimatedPosition: ReturnType<typeof estimateCurrentPosition> = null;
-      if (report.ageSeconds > LIVE_REPORT_SECONDS) {
+      if (report.ageSeconds >= LIVE_REPORT_SECONDS) {
         // No fresh GPS: advance the last real position along the timetable instead of leaving a stale dot.
         estimatedPosition = estimateCurrentPosition(direction, report);
         if (!estimatedPosition) return [];
@@ -819,7 +819,7 @@ function aggregateReports(reports: BusReport[], ownId: string | null, direction:
         if (!differentDeclaredTrips && Math.abs(first.ageSeconds - report.ageSeconds) <= 45
           && distanceMeters(first.latitude, first.longitude, report.latitude, report.longitude) < 200) return true;
 
-        if (Math.max(first.ageSeconds, report.ageSeconds) <= LIVE_REPORT_SECONDS) return false;
+        if (Math.max(first.ageSeconds, report.ageSeconds) < LIVE_REPORT_SECONDS) return false;
         const firstPosition = estimateCurrentPosition(direction, first) ?? first;
         const reportPosition = estimateCurrentPosition(direction, report) ?? report;
         return distanceMeters(firstPosition.latitude, firstPosition.longitude, reportPosition.latitude, reportPosition.longitude)
