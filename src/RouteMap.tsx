@@ -238,7 +238,7 @@ function reportIcon(report: BusReport) {
     </span>`,
     iconSize: [128, 74],
     iconAnchor: [64, 72],
-    popupAnchor: [0, -46],
+    popupAnchor: [0, -68],
   });
 }
 
@@ -274,7 +274,7 @@ function ghostIcon(ghost: GhostBus) {
     </span>`,
     iconSize: [128, 74],
     iconAnchor: [64, 72],
-    popupAnchor: [0, -46],
+    popupAnchor: [0, -68],
   });
 }
 
