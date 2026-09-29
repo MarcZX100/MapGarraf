@@ -9,6 +9,7 @@ import vm from "node:vm";
 import { after, before, test } from "node:test";
 import Database from "better-sqlite3";
 import { isPlausibleMovement, isWithinRouteCorridor } from "../server/routeValidation.mjs";
+import { hasConflictingDepartures } from "../shared/reportIdentity.mjs";
 
 let tempDirectory;
 let databasePath;
@@ -75,6 +76,13 @@ test("route corridor and speed checks reject implausible synthetic points", () =
   ), false);
 });
 
+test("reports with different selected departures cannot be merged, including through an unlabeled report", () => {
+  assert.equal(hasConflictingDepartures([{ departureTime: "08:15" }], "08:15"), false);
+  assert.equal(hasConflictingDepartures([{ departureTime: "08:15" }], "08:30"), true);
+  assert.equal(hasConflictingDepartures([{ departureTime: "08:15" }, { departureTime: null }], "08:30"), true);
+  assert.equal(hasConflictingDepartures([{ departureTime: null }], "08:15"), false);
+});
+
 test("API validates contributions, protects owner actions, limits active reports and rounds stale GPS", async () => {
   const start = { latitude: 41.22038084744236, longitude: 1.7305158618556 };
   const payload = {
@@ -109,15 +117,21 @@ test("API validates contributions, protects owner actions, limits active reports
   const created = await response.json();
   const { id } = created.report;
   const token = created.shareToken;
+  const deleteToken = created.deleteToken;
   assert.equal(typeof token, "string");
   assert.equal(token.length, 43);
+  assert.equal(typeof deleteToken, "string");
+  assert.equal(deleteToken.length, 43);
+  assert.notEqual(deleteToken, token, "delete capability is separate from the update token");
   assert.equal("token_hash" in created.report, false);
 
   response = await fetch(`${baseUrl}/api/vehicles?direction=to-tarragona`);
   let listing = await response.json();
+  assert.equal(listing.estimateForSeconds, 105 * 60, "stale reports are retained for a full trip and delay buffer");
   const liveReport = listing.reports.find((report) => report.id === id);
   assert.equal(liveReport.latitude, start.latitude, "live position stays precise");
   assert.equal(JSON.stringify(listing).includes(token), false, "public API does not expose share token");
+  assert.equal(JSON.stringify(listing).includes(deleteToken), false, "public API does not expose delete token");
 
   response = await fetch(`${baseUrl}/api/vehicles`, {
     method: "POST",
@@ -148,12 +162,12 @@ test("API validates contributions, protects owner actions, limits active reports
   assert.equal(response.status, 200, "owner can update optional fields");
 
   const testDb = new Database(databasePath);
-  testDb.prepare("UPDATE bus_reports SET updated_at = ? WHERE id = ?").run(Date.now() - 61_000, id);
+  testDb.prepare("UPDATE bus_reports SET updated_at = ? WHERE id = ?").run(Date.now() - 31 * 60_000, id);
   testDb.close();
   response = await fetch(`${baseUrl}/api/vehicles?direction=to-tarragona`);
   listing = await response.json();
   const staleReport = listing.reports.find((report) => report.id === id);
-  assert.equal(staleReport.ageSeconds >= 60, true);
+  assert.equal(staleReport.ageSeconds >= 30 * 60, true, "reports remain available beyond the old 20-minute cutoff");
   assert.equal(staleReport.latitude, Number(start.latitude.toFixed(3)));
   assert.equal(staleReport.longitude, Number(start.longitude.toFixed(3)));
   assert.equal(staleReport.accuracy, null);
@@ -165,7 +179,7 @@ test("API validates contributions, protects owner actions, limits active reports
   assert.equal(response.status, 404, "wrong token cannot delete");
   response = await fetch(`${baseUrl}/api/vehicles/${encodeURIComponent(id)}`, {
     method: "DELETE",
-    headers: { "x-share-token": token },
+    headers: { "x-delete-token": deleteToken },
   });
   assert.equal(response.status, 204, "owner can delete immediately");
 });

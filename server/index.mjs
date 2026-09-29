@@ -14,9 +14,9 @@ const root = path.resolve(here, "..");
 const port = Number(process.env.PORT || 4174);
 const dbPath = path.resolve(root, process.env.DATABASE_PATH || "./data/busgarraf.sqlite");
 const liveForMs = 60 * 1000;
-// After liveForMs without a GPS reading the last exact position is still served, for this long,
-// so clients can estimate where the bus is now from the timetable. "Dejar de compartir" deletes it at once.
-const estimateForMs = 20 * 60 * 1000;
+// Keep a stale fix long enough to estimate a full 75-minute trip, including a delay buffer.
+// The client stops drawing it once the timetable says the bus should have reached the terminus.
+const estimateForMs = 105 * 60 * 1000;
 const maxGpsAccuracyMeters = positiveInteger(process.env.MAX_GPS_ACCURACY_METERS, 1_000);
 const maxNewReportsPerMinutePerIp = positiveInteger(process.env.MAX_NEW_REPORTS_PER_MINUTE_PER_IP, 30);
 const maxWritesPerMinutePerIp = positiveInteger(process.env.MAX_WRITES_PER_MINUTE_PER_IP, 300);
@@ -38,6 +38,7 @@ db.exec(`
   CREATE TABLE IF NOT EXISTS bus_reports (
     id TEXT PRIMARY KEY,
     token_hash TEXT NOT NULL,
+    delete_token_hash TEXT,
     direction TEXT NOT NULL CHECK (direction IN ('to-tarragona', 'to-vilanova')),
     latitude REAL NOT NULL,
     longitude REAL NOT NULL,
@@ -55,6 +56,9 @@ db.exec(`
 `);
 if (!db.prepare("PRAGMA table_info(bus_reports)").all().some((column) => column.name === "reinforcement")) {
   db.exec("ALTER TABLE bus_reports ADD COLUMN reinforcement INTEGER NOT NULL DEFAULT 0 CHECK (reinforcement IN (0, 1))");
+}
+if (!db.prepare("PRAGMA table_info(bus_reports)").all().some((column) => column.name === "delete_token_hash")) {
+  db.exec("ALTER TABLE bus_reports ADD COLUMN delete_token_hash TEXT");
 }
 
 const app = express();
@@ -179,6 +183,15 @@ function authorized(req, report) {
   return left.length === right.length && crypto.timingSafeEqual(left, right);
 }
 
+function authorizedWithToken(req, report, hashField, headerName = "x-share-token") {
+  const supplied = req.get(headerName) || "";
+  if (!supplied || !report[hashField]) return false;
+  const suppliedHash = crypto.createHash("sha256").update(supplied).digest("hex");
+  const left = Buffer.from(report[hashField], "hex");
+  const right = Buffer.from(suppliedHash, "hex");
+  return left.length === right.length && crypto.timingSafeEqual(left, right);
+}
+
 app.get("/health", (_req, res) => {
   try {
     db.prepare("SELECT 1").get();
@@ -215,14 +228,16 @@ app.post("/api/vehicles", createLimiter, writeLimiter, (req, res) => {
   }
   const id = crypto.randomUUID();
   const shareToken = crypto.randomBytes(32).toString("base64url");
+  const deleteToken = crypto.randomBytes(32).toString("base64url");
   db.prepare(`
     INSERT INTO bus_reports
-      (id, token_hash, direction, latitude, longitude, accuracy, departure_time, vehicle_label, occupancy, reinforcement, delay_minutes, created_at, updated_at)
+      (id, token_hash, delete_token_hash, direction, latitude, longitude, accuracy, departure_time, vehicle_label, occupancy, reinforcement, delay_minutes, created_at, updated_at)
     VALUES
-      (@id, @token_hash, @direction, @latitude, @longitude, @accuracy, @departure_time, @vehicle_label, @occupancy, @reinforcement, @delay_minutes, @created_at, @updated_at)
+      (@id, @token_hash, @delete_token_hash, @direction, @latitude, @longitude, @accuracy, @departure_time, @vehicle_label, @occupancy, @reinforcement, @delay_minutes, @created_at, @updated_at)
   `).run({
     id,
     token_hash: crypto.createHash("sha256").update(shareToken).digest("hex"),
+    delete_token_hash: crypto.createHash("sha256").update(deleteToken).digest("hex"),
     direction: input.direction,
     latitude: input.latitude,
     longitude: input.longitude,
@@ -236,7 +251,7 @@ app.post("/api/vehicles", createLimiter, writeLimiter, (req, res) => {
     updated_at: now,
   });
   const row = db.prepare("SELECT * FROM bus_reports WHERE id = ?").get(id);
-  res.status(201).json({ report: publicReport(row, now), shareToken });
+  res.status(201).json({ report: publicReport(row, now), shareToken, deleteToken });
 });
 
 app.patch("/api/vehicles/:id", writeLimiter, (req, res) => {
@@ -284,7 +299,9 @@ app.patch("/api/vehicles/:id", writeLimiter, (req, res) => {
 
 app.delete("/api/vehicles/:id", writeLimiter, (req, res) => {
   const report = db.prepare("SELECT * FROM bus_reports WHERE id = ?").get(req.params.id);
-  if (!report || !authorized(req, report)) return res.status(404).json({ error: "La sesión de ubicación ya no está disponible." });
+  if (!report || (!authorizedWithToken(req, report, "delete_token_hash", "x-delete-token") && !authorized(req, report))) {
+    return res.status(404).json({ error: "La sesión de ubicación ya no está disponible." });
+  }
   db.prepare("DELETE FROM bus_reports WHERE id = ?").run(report.id);
   res.status(204).end();
 });

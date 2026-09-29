@@ -32,9 +32,10 @@ import { getReportStatus } from "./reportStatus";
 import { estimateCurrentPosition, estimateRouteStatus, getGhostBuses, ghostsApplyToday, unclaimedGhosts, type GhostBus } from "./ghostBuses";
 import { getNextSharedArrival, getNextTheoreticalArrival } from "./stopArrivals";
 import LegalPage, { legalKindFromPath } from "./LegalPage";
+import { hasConflictingDepartures } from "../shared/reportIdentity.mjs";
 
 type Occupancy = "low" | "medium" | "high" | null;
-type ShareSession = { id: string; token: string };
+type ShareSession = { id: string; token: string; deleteToken: string };
 type Draft = { departureTime: string; occupancy: Occupancy; reinforcement: boolean };
 type MapReport = BusReport & { supportCount: number; containsOwn: boolean };
 
@@ -42,7 +43,9 @@ type MapReport = BusReport & { supportCount: number; containsOwn: boolean };
 const LIVE_REPORT_SECONDS = 60;
 const ESTIMATED_REPORT_MATCH_DISTANCE_M = 2_500;
 const CURRENT_BUS_COOKIE = "mapgarraf-current-bus";
-type SavedCurrentBus = { direction: Direction; departureTime: string; expiresAt: number; reinforcement: boolean };
+const PENDING_DELETES_KEY = "mapgarraf-pending-report-deletes-v1";
+type PendingDelete = { id: string; token: string; expiresAt: number };
+type SavedCurrentBus = { direction: Direction; departureTime: string; expiresAt: number; reinforcement: boolean; resumeSharing: boolean };
 type ApiError = Error & { status?: number };
 type InstallPrompt = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: "accepted" | "dismissed" }> };
 
@@ -75,14 +78,20 @@ function readCurrentBusCookie(): SavedCurrentBus | null {
       clearCurrentBusCookie();
       return null;
     }
-    return { direction: saved.direction, departureTime: saved.departureTime, expiresAt: saved.expiresAt, reinforcement: saved.reinforcement === true };
+    return {
+      direction: saved.direction,
+      departureTime: saved.departureTime,
+      expiresAt: saved.expiresAt,
+      reinforcement: saved.reinforcement === true,
+      resumeSharing: saved.resumeSharing === true,
+    };
   } catch {
     clearCurrentBusCookie();
     return null;
   }
 }
 
-function saveCurrentBusCookie(direction: Direction, departureTime: string, reinforcement: boolean): SavedCurrentBus | null {
+function saveCurrentBusCookie(direction: Direction, departureTime: string, reinforcement: boolean, resumeSharing = false): SavedCurrentBus | null {
   const timetable = timetables[direction];
   if (!timetable.departures.includes(departureTime)) return null;
   const [hours, minutes] = departureTime.split(":").map(Number);
@@ -94,9 +103,39 @@ function saveCurrentBusCookie(direction: Direction, departureTime: string, reinf
     clearCurrentBusCookie();
     return null;
   }
-  const saved = { direction, departureTime, expiresAt, reinforcement };
+  const saved = { direction, departureTime, expiresAt, reinforcement, resumeSharing };
   document.cookie = `${CURRENT_BUS_COOKIE}=${encodeURIComponent(JSON.stringify(saved))}; Max-Age=${maxAge}; Path=/; SameSite=Lax${location.protocol === "https:" ? "; Secure" : ""}`;
   return saved;
+}
+
+function rememberPendingDelete(session: ShareSession) {
+  try {
+    const current = JSON.parse(localStorage.getItem(PENDING_DELETES_KEY) || "[]") as PendingDelete[];
+    const pending = current.filter((item) => item.id !== session.id);
+    pending.push({ id: session.id, token: session.deleteToken, expiresAt: Date.now() + 24 * 60 * 60_000 });
+    localStorage.setItem(PENDING_DELETES_KEY, JSON.stringify(pending));
+  } catch { /* If browser storage is unavailable, server expiry remains the fallback. */ }
+}
+
+async function retryPendingDeletes() {
+  let pending: PendingDelete[];
+  try {
+    pending = JSON.parse(localStorage.getItem(PENDING_DELETES_KEY) || "[]") as PendingDelete[];
+    if (!Array.isArray(pending) || !pending.length) return;
+  } catch { return; }
+  const remaining: PendingDelete[] = [];
+  for (const item of pending) {
+    if (!item || typeof item.id !== "string" || typeof item.token !== "string"
+      || typeof item.expiresAt !== "number" || item.expiresAt <= Date.now()) continue;
+    try {
+      const response = await fetch(`/api/vehicles/${encodeURIComponent(item.id)}`, {
+        method: "DELETE",
+        headers: { "x-delete-token": item.token },
+      });
+      if (!response.ok && response.status !== 404) remaining.push(item);
+    } catch { remaining.push(item); }
+  }
+  try { localStorage.setItem(PENDING_DELETES_KEY, JSON.stringify(remaining)); } catch { /* best effort */ }
 }
 
 export default function App() {
@@ -128,6 +167,7 @@ export default function App() {
   const mapExpandButtonRef = useRef<HTMLButtonElement>(null);
   const mapCloseButtonRef = useRef<HTMLButtonElement>(null);
   const restoredCurrentBusRef = useRef<string | null>(null);
+  const autoShareAttemptedRef = useRef<string | null>(null);
   const sessionRef = useRef<ShareSession | null>(null);
   const watchRef = useRef<number | null>(null);
   const heartbeatRef = useRef<number | null>(null);
@@ -221,7 +261,17 @@ export default function App() {
   };
 
   function rememberCurrentBus(departureTime: string, reinforcement = draftRef.current.reinforcement) {
-    setSavedCurrentBus(saveCurrentBusCookie(directionRef.current, departureTime, reinforcement));
+    setSavedCurrentBus(saveCurrentBusCookie(directionRef.current, departureTime, reinforcement, savedCurrentBus?.resumeSharing ?? false));
+  }
+
+  function setCurrentBusResumeSharing(resumeSharing: boolean) {
+    if (!savedCurrentBus) return;
+    setSavedCurrentBus(saveCurrentBusCookie(
+      savedCurrentBus.direction,
+      savedCurrentBus.departureTime,
+      savedCurrentBus.reinforcement,
+      resumeSharing,
+    ));
   }
 
   const activeReports = useMemo(() => {
@@ -260,6 +310,17 @@ export default function App() {
     return () => window.clearInterval(timer);
   }, []);
 
+  useEffect(() => {
+    const retry = () => { void retryPendingDeletes(); };
+    retry();
+    window.addEventListener("online", retry);
+    const timer = window.setInterval(retry, 30_000);
+    return () => {
+      window.removeEventListener("online", retry);
+      window.clearInterval(timer);
+    };
+  }, []);
+
   const ghostsToday = ghostsApplyToday(now);
   const ghosts = useMemo(
     () => (showGhosts ? unclaimedGhosts(
@@ -284,6 +345,10 @@ export default function App() {
     setFollowMapBus(busId !== null);
     setMapExpanded(true);
     goToPage(MAP_PAGE);
+    if (savedCurrentBus.resumeSharing && autoShareAttemptedRef.current !== key) {
+      autoShareAttemptedRef.current = key;
+      startSharing();
+    }
   }, [savedCurrentBus, reportsLoaded, activeReports, ghosts]);
 
   useEffect(() => {
@@ -380,8 +445,8 @@ export default function App() {
           body: JSON.stringify({ ...payload, direction: directionRef.current }),
         });
         if (!response.ok) throw await responseError(response);
-        const data = (await response.json()) as { report: BusReport; shareToken: string };
-        const session = { id: data.report.id, token: data.shareToken };
+        const data = (await response.json()) as { report: BusReport; shareToken: string; deleteToken: string };
+        const session = { id: data.report.id, token: data.shareToken, deleteToken: data.deleteToken };
         sessionRef.current = session;
         setMyReportId(session.id);
         setShareState("sharing");
@@ -449,6 +514,7 @@ export default function App() {
       return;
     }
     if (watchRef.current !== null) return;
+    setCurrentBusResumeSharing(true);
     latestPositionRef.current = null;
     lastSentAtRef.current = 0;
     lastSentPointRef.current = null;
@@ -464,6 +530,7 @@ export default function App() {
         heartbeatRef.current = null;
         latestPositionRef.current = null;
         setShareState("idle");
+        if (error.code === error.PERMISSION_DENIED) setCurrentBusResumeSharing(false);
         const message = error.code === error.PERMISSION_DENIED
           ? "Has bloqueado la ubicación. Actívala en los ajustes del navegador si quieres compartir el bus."
           : error.code === error.TIMEOUT
@@ -480,6 +547,7 @@ export default function App() {
   }
 
   async function stopSharing(expiredTrip = false) {
+    setCurrentBusResumeSharing(false);
     if (watchRef.current !== null) navigator.geolocation.clearWatch(watchRef.current);
     watchRef.current = null;
     if (heartbeatRef.current !== null) window.clearInterval(heartbeatRef.current);
@@ -496,17 +564,19 @@ export default function App() {
       try {
         const response = await fetch(`/api/vehicles/${encodeURIComponent(session.id)}`, {
           method: "DELETE",
-          headers: { "x-share-token": session.token },
+          headers: { "x-delete-token": session.deleteToken },
         });
+        if (!response.ok && response.status !== 404) rememberPendingDelete(session);
         setNotice(expiredTrip
           ? "El trayecto ha llegado a su hora prevista y se ha dejado de compartir."
           : response.ok || response.status === 404
             ? "Has dejado de compartir y la señal se ha retirado del mapa."
-            : "Has dejado de enviar ubicación. La última señal seguirá visible como estimación hasta 20 min.");
+            : "Has dejado de compartir. Reintentaré borrar la señal cuando vuelva la conexión; mientras tanto dejará de ser GPS reciente y se estimará hasta la llegada prevista.");
       } catch {
+        rememberPendingDelete(session);
         setNotice(expiredTrip
-          ? "El trayecto ha llegado a su hora prevista y se ha dejado de compartir; sin conexión, la última señal puede seguir como estimación hasta 20 min."
-          : "Has dejado de enviar ubicación. Sin conexión, la última señal seguirá visible como estimación hasta 20 min.");
+          ? "El trayecto ha llegado a su hora prevista. Reintentaré borrar la señal cuando vuelva la conexión."
+          : "Has dejado de compartir. Reintentaré borrar la señal cuando vuelva la conexión; mientras tanto dejará de ser GPS reciente y se estimará hasta la llegada prevista.");
       }
     } else {
       setNotice(expiredTrip ? "El trayecto ha llegado a su hora prevista y se ha cancelado." : "Has dejado de compartir.");
@@ -674,7 +744,7 @@ export default function App() {
             </select>
             {!draft.departureTime && <small>La necesitamos para calcular si el bus va adelantado o con retraso.</small>}
           </label>
-          <p className="location-privacy"><strong>Ten en cuenta:</strong> mientras se actualiza, tu GPS exacto es público. Tras 1 minuto sin GPS, la API solo muestra una posición aproximada (unos 100 m) para calcular la estimación; la señal deja de publicarse a los 20 min y se borra del servidor en 24 h. «Dejar de compartir» solicita el borrado inmediato.</p>
+          <p className="location-privacy"><strong>Ten en cuenta:</strong> el GPS exacto es público mientras se actualiza. Tras 1 minuto sin GPS deja de mostrarse como posición real y pasa a estimarse con el horario, hasta la llegada prevista (máximo 105 min desde la última lectura). Se borra del servidor en 24 h. «Dejar de compartir» solicita el borrado inmediato.</p>
           {shareState === "sharing" ? (
             <button className="share-button stop-button" onClick={() => void stopSharing()}><X size={18} /> Dejar de compartir</button>
           ) : (
@@ -684,7 +754,7 @@ export default function App() {
           )}
           <details className="privacy-details">
             <summary>Privacidad y seguridad</summary>
-            <p>Solo enviamos ubicación tras pulsar compartir y aceptar el permiso del navegador. El GPS exacto es público mientras se actualiza y durante un minuto desde la última lectura; después, la API devuelve una posición redondeada a unos 100 m para estimar por dónde va el bus, hasta 20 min. La señal se borra del servidor en un máximo de 24 h; pulsar «Dejar de compartir» solicita su borrado inmediato. No se crea una cuenta ni guardamos un historial de trayectos. El mapa solicita imágenes de OpenStreetMap, pero no le enviamos tu GPS. Úsalo como pasajero, nunca mientras conduces.</p>
+            <p>Solo enviamos ubicación tras pulsar compartir y aceptar el permiso del navegador. El GPS exacto es público mientras se actualiza y durante un minuto desde la última lectura; después, deja de considerarse una posición real y se estima con el horario, con coordenadas redondeadas a unos 100 m, hasta la llegada prevista (máximo 105 min desde la última lectura). Si vuelves a abrir la web durante ese trayecto, intentará reanudar la ubicación si ya habías iniciado la compartición y el navegador conserva el permiso. La señal se borra del servidor en un máximo de 24 h; pulsar «Dejar de compartir» solicita su borrado inmediato y, si no hay conexión, se volverá a intentar al recuperarla mientras esta pestaña siga abierta. No se crea una cuenta ni guardamos un historial de trayectos. El mapa solicita imágenes de OpenStreetMap, pero no le enviamos tu GPS. Úsalo como pasajero, nunca mientras conduces.</p>
           </details>
           <button className="options-toggle" aria-expanded={showOptions} onClick={() => setShowOptions((value) => !value)}>
             {showOptions ? "Ocultar opciones" : "Añadir detalles útiles (opcional)"}<ChevronDown size={15} className={showOptions ? "rotate" : ""} />
@@ -961,17 +1031,21 @@ function aggregateReports(reports: BusReport[], ownId: string | null, direction:
   const groups: BusReport[][] = [];
   for (const report of [...reports].sort((a, b) => a.ageSeconds - b.ageSeconds)) {
     const group = groups.find((candidate) => {
+      if (hasConflictingDepartures(candidate, report.departureTime)) return false;
       return candidate.some((first) => {
         const firstTrip = tripByReportId.get(first.id);
         const reportTrip = tripByReportId.get(report.id);
         if (firstTrip && reportTrip && firstTrip === reportTrip) return true;
         if (first.departureTime && report.departureTime && first.departureTime === report.departureTime) return true;
 
-        const differentDeclaredTrips = first.departureTime && report.departureTime && first.departureTime !== report.departureTime;
-        if (!differentDeclaredTrips && Math.abs(first.ageSeconds - report.ageSeconds) <= 45
+        if (Math.abs(first.ageSeconds - report.ageSeconds) <= 45
           && distanceMeters(first.latitude, first.longitude, report.latitude, report.longitude) < 200) return true;
 
         if (Math.max(first.ageSeconds, report.ageSeconds) < LIVE_REPORT_SECONDS) return false;
+        // A stopped or badly delayed bus can be far behind its timetable projection.
+        // Compare the last observed GPS fixes as well, with a distance allowance based
+        // on the time between them, so a newer real fix can absorb its stale estimate.
+        if (isPlausibleSameBusByObservedPositions(first, report)) return true;
         const firstPosition = estimateCurrentPosition(direction, first) ?? first;
         const reportPosition = estimateCurrentPosition(direction, report) ?? report;
         return distanceMeters(firstPosition.latitude, firstPosition.longitude, reportPosition.latitude, reportPosition.longitude)
@@ -1024,6 +1098,12 @@ function distanceMeters(lat1: number, lng1: number, lat2: number, lng2: number) 
   return 12_742_000 * Math.asin(Math.sqrt(a));
 }
 
+function isPlausibleSameBusByObservedPositions(a: BusReport, b: BusReport) {
+  const ageGapSeconds = Math.abs(a.ageSeconds - b.ageSeconds);
+  const maximumSeparationMeters = Math.min(8_000, 500 + ageGapSeconds * 12);
+  return distanceMeters(a.latitude, a.longitude, b.latitude, b.longitude) <= maximumSeparationMeters;
+}
+
 function isReplacedByFreshReport(stale: BusReport, freshReports: BusReport[], direction: Direction, tripByReportId: Map<string, string | null>) {
   const stalePosition = estimateCurrentPosition(direction, stale);
   if (!stalePosition) return false;
@@ -1031,9 +1111,11 @@ function isReplacedByFreshReport(stale: BusReport, freshReports: BusReport[], di
 
   return freshReports.some((fresh) => {
     if (fresh.ageSeconds >= stale.ageSeconds) return false;
+    if (hasConflictingDepartures([stale], fresh.departureTime)) return false;
     if (stale.departureTime && fresh.departureTime && stale.departureTime === fresh.departureTime) return true;
     const freshTrip = tripByReportId.get(fresh.id);
     if (staleTrip && freshTrip && staleTrip === freshTrip) return true;
+    if (isPlausibleSameBusByObservedPositions(stale, fresh)) return true;
 
     // A fresh GPS report can use a different departure label and still be the same
     // trip. Compare both signals projected to now, then prefer the fresh location.
