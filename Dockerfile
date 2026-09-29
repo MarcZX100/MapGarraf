@@ -17,6 +17,7 @@ RUN mkdir -p /app/data && chown -R node:node /app
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --chown=node:node server ./server
+COPY --chown=node:node shared ./shared
 USER node
 VOLUME ["/app/data"]
 EXPOSE 4173

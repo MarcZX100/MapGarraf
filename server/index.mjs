@@ -7,6 +7,7 @@ import express from "express";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import { z } from "zod";
+import { isPlausibleMovement, isWithinRouteCorridor } from "./routeValidation.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
@@ -16,9 +17,18 @@ const liveForMs = 60 * 1000;
 // After liveForMs without a GPS reading the last exact position is still served, for this long,
 // so clients can estimate where the bus is now from the timetable. "Dejar de compartir" deletes it at once.
 const estimateForMs = 20 * 60 * 1000;
+const maxGpsAccuracyMeters = positiveInteger(process.env.MAX_GPS_ACCURACY_METERS, 1_000);
+const maxNewReportsPerMinutePerIp = positiveInteger(process.env.MAX_NEW_REPORTS_PER_MINUTE_PER_IP, 30);
+const maxWritesPerMinutePerIp = positiveInteger(process.env.MAX_WRITES_PER_MINUTE_PER_IP, 300);
+const maxActiveReportsPerDirection = positiveInteger(process.env.MAX_ACTIVE_REPORTS_PER_DIRECTION, 60);
 const directionSchema = z.enum(["to-tarragona", "to-vilanova"]);
 const occupancySchema = z.enum(["low", "medium", "high"]).nullable().optional();
 const reinforcementSchema = z.boolean().optional();
+
+function positiveInteger(value, fallback) {
+  const parsed = Number(value);
+  return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
 
 fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 const db = new Database(dbPath);
@@ -98,10 +108,17 @@ const readLimiter = rateLimit({
 });
 const writeLimiter = rateLimit({
   windowMs: 60_000,
-  limit: 600,
+  limit: maxWritesPerMinutePerIp,
   standardHeaders: "draft-8",
   legacyHeaders: false,
   handler: rateLimitHandler("Se han recibido demasiadas actualizaciones desde esta conexión. Espera unos segundos e inténtalo de nuevo."),
+});
+const createLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: maxNewReportsPerMinutePerIp,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  handler: rateLimitHandler("Se han creado demasiadas señales desde esta conexión. Espera un minuto antes de intentarlo de nuevo."),
 });
 app.use("/api", readLimiter);
 
@@ -110,23 +127,26 @@ const reportInput = z.object({
   // Broad corridor bounds discard clearly unrelated/spoofed coordinates.
   latitude: z.number().finite().min(41.05).max(41.28),
   longitude: z.number().finite().min(1.18).max(1.8),
-  accuracy: z.number().finite().min(0).max(100_000).optional(),
+  accuracy: z.number().finite().min(0).max(maxGpsAccuracyMeters).optional(),
   departureTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).nullable().optional(),
   occupancy: occupancySchema,
   reinforcement: reinforcementSchema,
 });
 const createReportInput = reportInput.extend({
+  accuracy: z.number().finite().min(0).max(maxGpsAccuracyMeters),
   departureTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
 });
 
 function publicReport(row, now = Date.now()) {
   const ageSeconds = Math.max(0, Math.floor((now - row.updated_at) / 1000));
+  const isLive = ageSeconds < liveForMs / 1000;
+  const publicCoordinate = (coordinate) => isLive ? coordinate : Number(coordinate.toFixed(3));
   return {
     id: row.id,
     direction: row.direction,
-    latitude: row.latitude,
-    longitude: row.longitude,
-    accuracy: row.accuracy,
+    latitude: publicCoordinate(row.latitude),
+    longitude: publicCoordinate(row.longitude),
+    accuracy: isLive ? row.accuracy : null,
     departureTime: row.departure_time,
     // Kept as null for API compatibility; punctuality is calculated by clients.
     occupancy: row.occupancy,
@@ -140,7 +160,11 @@ function publicReport(row, now = Date.now()) {
 function parseBody(schema, req, res) {
   const result = schema.safeParse(req.body);
   if (!result.success) {
-    res.status(400).json({ error: "Datos no válidos.", fields: result.error.flatten().fieldErrors });
+    const fields = result.error.flatten().fieldErrors;
+    const error = fields.accuracy
+      ? `El GPS debe indicar una precisión de ${maxGpsAccuracyMeters} metros o mejor.`
+      : "Datos no válidos.";
+    res.status(400).json({ error, fields });
     return null;
   }
   return result.data;
@@ -175,12 +199,22 @@ app.get("/api/vehicles", (req, res) => {
   res.json({ reports: rows.map((row) => publicReport(row, now)), liveForSeconds: liveForMs / 1000, estimateForSeconds: estimateForMs / 1000 });
 });
 
-app.post("/api/vehicles", writeLimiter, (req, res) => {
+app.post("/api/vehicles", createLimiter, writeLimiter, (req, res) => {
   const input = parseBody(createReportInput, req, res);
   if (!input) return;
+  if (!isWithinRouteCorridor(input.latitude, input.longitude, input.direction)) {
+    return res.status(400).json({ error: "La ubicación no está cerca del recorrido del bus." });
+  }
+  const now = Date.now();
+  db.prepare("DELETE FROM bus_reports WHERE updated_at < ?").run(now - 24 * 60 * 60 * 1000);
+  const activeCount = db.prepare("SELECT COUNT(*) AS count FROM bus_reports WHERE direction = ? AND updated_at >= ?")
+    .get(input.direction, now - estimateForMs).count;
+  if (activeCount >= maxActiveReportsPerDirection) {
+    res.setHeader("Retry-After", "60");
+    return res.status(429).json({ error: "Hay demasiadas señales activas en este sentido. Inténtalo de nuevo dentro de un minuto." });
+  }
   const id = crypto.randomUUID();
   const shareToken = crypto.randomBytes(32).toString("base64url");
-  const now = Date.now();
   db.prepare(`
     INSERT INTO bus_reports
       (id, token_hash, direction, latitude, longitude, accuracy, departure_time, vehicle_label, occupancy, reinforcement, delay_minutes, created_at, updated_at)
@@ -216,6 +250,18 @@ app.patch("/api/vehicles/:id", writeLimiter, (req, res) => {
     return res.status(400).json({ error: "Envía latitud y longitud juntas." });
   }
   const now = Date.now();
+  if (input.latitude !== undefined) {
+    if (!isWithinRouteCorridor(input.latitude, input.longitude, report.direction)) {
+      return res.status(400).json({ error: "La ubicación no está cerca del recorrido del bus." });
+    }
+    if (!isPlausibleMovement(
+      { latitude: report.latitude, longitude: report.longitude, accuracy: report.accuracy },
+      { latitude: input.latitude, longitude: input.longitude, accuracy: input.accuracy ?? report.accuracy },
+      (now - report.updated_at) / 1000,
+    )) {
+      return res.status(400).json({ error: "El cambio de ubicación es demasiado rápido para un autobús." });
+    }
+  }
   const fields = {
     latitude: input.latitude ?? report.latitude,
     longitude: input.longitude ?? report.longitude,

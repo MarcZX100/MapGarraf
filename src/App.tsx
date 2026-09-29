@@ -674,7 +674,7 @@ export default function App() {
             </select>
             {!draft.departureTime && <small>La necesitamos para calcular si el bus va adelantado o con retraso.</small>}
           </label>
-          <p className="location-privacy">Al compartir, tu GPS exacto se muestra públicamente como posición del bus. Si dejas de enviar sin pulsar «Dejar de compartir», el mapa estima por dónde va el bus según el horario, y tu última posición exacta sigue siendo pública hasta 20 min. Se borra del servidor en 24 h.</p>
+          <p className="location-privacy"><strong>Ten en cuenta:</strong> mientras se actualiza, tu GPS exacto es público. Tras 1 minuto sin GPS, la API solo muestra una posición aproximada (unos 100 m) para calcular la estimación; la señal deja de publicarse a los 20 min y se borra del servidor en 24 h. «Dejar de compartir» solicita el borrado inmediato.</p>
           {shareState === "sharing" ? (
             <button className="share-button stop-button" onClick={() => void stopSharing()}><X size={18} /> Dejar de compartir</button>
           ) : (
@@ -684,7 +684,7 @@ export default function App() {
           )}
           <details className="privacy-details">
             <summary>Privacidad y seguridad</summary>
-            <p>Solo enviamos ubicación tras pulsar compartir y aceptar el permiso del navegador. El punto y los detalles opcionales son visibles para quien abra el mapa; no se crea una cuenta ni guardamos un historial de trayectos. Si cierras la app sin detenerlo, el mapa deja de mostrar tu punto exacto al minuto y estima por dónde va el bus según el horario; tu última posición exacta sigue siendo accesible públicamente hasta 20 min y se borra del servidor en un máximo de 24 h. Pulsar «Dejar de compartir» la borra al instante. El mapa solicita imágenes de OpenStreetMap, pero no le enviamos tu GPS. Úsalo como pasajero, nunca mientras conduces.</p>
+            <p>Solo enviamos ubicación tras pulsar compartir y aceptar el permiso del navegador. El GPS exacto es público mientras se actualiza y durante un minuto desde la última lectura; después, la API devuelve una posición redondeada a unos 100 m para estimar por dónde va el bus, hasta 20 min. La señal se borra del servidor en un máximo de 24 h; pulsar «Dejar de compartir» solicita su borrado inmediato. No se crea una cuenta ni guardamos un historial de trayectos. El mapa solicita imágenes de OpenStreetMap, pero no le enviamos tu GPS. Úsalo como pasajero, nunca mientras conduces.</p>
           </details>
           <button className="options-toggle" aria-expanded={showOptions} onClick={() => setShowOptions((value) => !value)}>
             {showOptions ? "Ocultar opciones" : "Añadir detalles útiles (opcional)"}<ChevronDown size={15} className={showOptions ? "rotate" : ""} />

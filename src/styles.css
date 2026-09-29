@@ -91,7 +91,8 @@ h1 span { color: var(--teal); }
 .required-departure select:focus-visible { border-color: #ffd579; box-shadow: 0 0 0 3px rgb(255 213 121 / 25%); }
 .required-departure small { display: block; margin-top: 5px; color: #c5d8f0; font-size: 9px; font-weight: 450; line-height: 1.4; }
 .stop-button { background: #fff2df; color: #77501f; }
-.location-privacy { margin: -4px 1px 12px; color: #c1d4ed; font-size: 9px; line-height: 1.45; }
+.location-privacy { margin: -4px 1px 12px; padding: 10px 11px; border-left: 3px solid #739cd2; border-radius: 7px; background: rgb(115 156 210 / 12%); color: #dbe8f8; font-size: 11px; line-height: 1.5; }
+.location-privacy strong { color: #fff; }
 .privacy-details { margin: 9px 1px 0; color: #d5e2f2; font-size: 9px; }
 .privacy-details summary { width: fit-content; cursor: pointer; color: #e5eef9; font-weight: 600; }
 .privacy-details p { margin: 7px 0 0; color: #c1d4ed; font-size: 9px; line-height: 1.5; }

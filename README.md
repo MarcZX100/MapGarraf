@@ -10,8 +10,8 @@ Es un proyecto comunitario independiente, no un producto de BusGarraf. No recibe
 - Mapa Leaflet con las 16 paradas mostradas individualmente, coordenadas por sentido y un trazado por calles calculado sobre OpenStreetMap con OSRM.
 - Selector de sentido, señales comunitarias recientes, compartir/detener con un toque y opciones de ocupación y marca de servicio de refuerzo. Esa marca aparece en la tarjeta, el mapa y el popup, y se conserva aunque la posición pase a estimada. La app estima el retraso comparando el GPS con el horario y la salida elegida. El resultado no es oficial y puede ser incierto.
 - Para compartir una ubicación hay que elegir primero la hora de salida desde la cabecera; el formulario y la API rechazan señales nuevas sin ese dato para calcular retraso y posición estimada con la salida correcta.
-- API Express con validación Zod, cabeceras Helmet, límites de uso, token aleatorio por señal, SQLite persistente y caducidad automática.
-- Una señal se considera en vivo durante 1 minuto tras su última lectura GPS. Pasado ese tiempo, el mapa deja de mostrar el punto exacto y lo sustituye por una posición estimada: la última lectura real avanzada a lo largo del horario, conservando el retraso que llevaba (hasta 20 minutos; después el bus vuelve a ser un fantasma sin verificar). Para que el cliente pueda estimar, el servidor sigue sirviendo la última posición exacta hasta 20 minutos, así que **las coordenadas exactas son públicas hasta 20 minutos tras la última lectura**, salvo que el viajero pulse «Dejar de compartir», que la borra al instante. Todo se borra de la base de datos en 24 horas. No se pide cuenta, nombre ni identificador del dispositivo.
+- API Express con validación Zod, proximidad al trazado y plausibilidad de movimiento, cabeceras Helmet, límites de uso, token aleatorio por señal, SQLite persistente y caducidad automática.
+- Una señal se considera en vivo durante 1 minuto tras su última lectura GPS. Durante ese periodo la API publica el punto exacto; después redondea las coordenadas a unos 100 m y el mapa estima el avance con el horario durante un máximo de 20 minutos. La señal deja de aparecer al superar esa ventana y se borra de SQLite en 24 horas. «Dejar de compartir» solicita su borrado inmediato. La aplicación rechaza precisión GPS peor que 1.000 m. No se pide cuenta, nombre ni identificador del dispositivo.
 - Buses fantasma: de lunes a viernes, cada servicio del horario en curso se dibuja donde debería estar según el horario publicado, con aviso «sin verificar». No son datos reales ni tienen por qué existir. Un fantasma se sustituye por la posición real cuando un viajero comparte ese bus (se asocia por la hora de salida indicada o, si no la hay, por posición y retraso). Se calculan en el navegador con `src/ghostBuses.ts`; el servidor no interviene. Se pueden ocultar desde el aviso sobre el mapa.
 - Imagen Docker y volumen SQLite persistente para desplegar una sola instancia.
 
@@ -53,6 +53,12 @@ npm run build
 npm start
 ```
 
+Pruebas de seguridad de la API con datos sintéticos y una base temporal:
+
+```sh
+npm test
+```
+
 La API y los archivos compilados se sirven juntos en el puerto 4174 por defecto. El puerto, la ruta de la base de datos y el número de proxies de confianza se configuran con `PORT`, `DATABASE_PATH` y `TRUST_PROXY`; consulta `.env.example`.
 
 ## Despliegue con Docker
@@ -61,14 +67,16 @@ La API y los archivos compilados se sirven juntos en el puerto 4174 por defecto.
 docker compose up -d --build
 ```
 
-El servicio queda en `127.0.0.1:${HOST_PORT:-4175}` del host y guarda SQLite en el volumen `mapgarraf-data`. Antes de exponerlo a viajeros, colócalo detrás de un proxy con TLS: HTTPS es necesario para geolocalización e instalación PWA. Si hay exactamente un proxy de confianza delante de Express, configura `TRUST_PROXY=1`. No escales esta configuración SQLite a varias instancias; antes migra a una base de datos transaccional compartida y a infraestructura compartida para sesiones/límites.
+El servicio queda en `127.0.0.1:${HOST_PORT:-4175}` del host y guarda SQLite en el volumen `mapgarraf-data`. Antes de exponerlo a viajeros, colócalo detrás de un proxy con TLS: HTTPS es necesario para geolocalización e instalación PWA. Si hay exactamente un proxy de confianza delante de Express, configura `TRUST_PROXY=1` y haz que el proxy sobrescriba o añada correctamente `X-Forwarded-For`; no publiques directamente el puerto de Express. Comprueba en el proxy HSTS y las cabeceras de seguridad antes del lanzamiento. No escales esta configuración SQLite ni los límites en memoria a varias instancias; antes migra a almacenamiento e infraestructura compartidos.
 
-Antes de un lanzamiento público, añade un contacto visible, configura copias de seguridad y monitorización, revisa el aviso de privacidad de ubicación con quien opere el servicio y confirma el plazo de conservación. Las teselas públicas de OpenStreetMap son comunitarias, de mejor esfuerzo y sin SLA; la app respeta la caché del navegador y no descarga teselas por adelantado ni las guarda offline. Cambia `VITE_TILE_URL` durante la compilación para usar un proveedor contratado o teselas propias. Si el proveedor requiere otro origen o protocolo, revisa la CSP.
+Las cuotas configurables son `MAX_GPS_ACCURACY_METERS` (1.000), `MAX_NEW_REPORTS_PER_MINUTE_PER_IP` (30), `MAX_WRITES_PER_MINUTE_PER_IP` (300) y `MAX_ACTIVE_REPORTS_PER_DIRECTION` (60). El límite de informes activos es global por sentido en la instancia SQLite única. Ajusta estos valores según uso real y revisa periódicamente ocupación y crecimiento del volumen.
+
+Antes de un lanzamiento público, configura copias de seguridad cifradas con plazo de retención definido, monitorización del volumen y alertas de espacio; las copias pueden conservar datos después de borrarlos de la base activa. Revisa los permisos del volumen y la política de privacidad de ubicación con quien opere el servicio. Las teselas públicas de OpenStreetMap son comunitarias, de mejor esfuerzo y sin SLA; la app respeta la caché del navegador y no descarga teselas por adelantado ni las guarda offline. Cambia `VITE_TILE_URL` durante la compilación para usar un proveedor contratado o teselas propias. Si el proveedor requiere otro origen o protocolo, revisa la CSP.
 
 ## API
 
 - `GET /health` — disponibilidad del proceso y la base de datos.
-- `GET /api/vehicles?direction=to-tarragona|to-vilanova` — señales comunitarias de los últimos 20 minutos (`ageSeconds` indica su antigüedad; las de 1 minuto o más son solo para estimar).
+- `GET /api/vehicles?direction=to-tarragona|to-vilanova` — señales comunitarias de los últimos 20 minutos (`ageSeconds` indica su antigüedad); las posiciones son exactas durante el primer minuto y después se redondean a unos 100 m.
 - `POST /api/vehicles` — crea una señal y devuelve un `shareToken` de un solo uso.
 - `PATCH /api/vehicles/:id` — actualiza una señal mediante `x-share-token`.
 - `DELETE /api/vehicles/:id` — deja de compartir mediante `x-share-token`.
