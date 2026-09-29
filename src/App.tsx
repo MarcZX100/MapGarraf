@@ -31,6 +31,7 @@ import { directionLabel, officialScheduleUrl, officialTariffUrl, publishedPdfUrl
 import { getReportStatus } from "./reportStatus";
 import { estimateCurrentPosition, estimateRouteStatus, getGhostBuses, ghostsApplyToday, unclaimedGhosts, type GhostBus } from "./ghostBuses";
 import { getNextSharedArrival, getNextTheoreticalArrival } from "./stopArrivals";
+import LegalPage, { legalKindFromPath } from "./LegalPage";
 
 type Occupancy = "low" | "medium" | "high" | null;
 type ShareSession = { id: string; token: string };
@@ -40,6 +41,8 @@ type MapReport = BusReport & { supportCount: number; containsOwn: boolean };
 // The server flags a position as live for 1 minute; older ones are only served so the map can estimate.
 const LIVE_REPORT_SECONDS = 60;
 const ESTIMATED_REPORT_MATCH_DISTANCE_M = 2_500;
+const CURRENT_BUS_COOKIE = "mapgarraf-current-bus";
+type SavedCurrentBus = { direction: Direction; departureTime: string; expiresAt: number; reinforcement: boolean };
 type ApiError = Error & { status?: number };
 type InstallPrompt = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: "accepted" | "dismissed" }> };
 
@@ -54,12 +57,58 @@ const NAV_ITEMS = [
   { page: STOPS_PAGE, label: "Paradas", Icon: ListOrdered },
 ] as const satisfies ReadonlyArray<{ page: Page; label: string; Icon: typeof Clock3 }>;
 
+function clearCurrentBusCookie() {
+  document.cookie = `${CURRENT_BUS_COOKIE}=; Max-Age=0; Path=/; SameSite=Lax${location.protocol === "https:" ? "; Secure" : ""}`;
+}
+
+function readCurrentBusCookie(): SavedCurrentBus | null {
+  const value = document.cookie.split(";").map((part) => part.trim()).find((part) => part.startsWith(`${CURRENT_BUS_COOKIE}=`))?.slice(CURRENT_BUS_COOKIE.length + 1);
+  if (!value) return null;
+  try {
+    const saved = JSON.parse(decodeURIComponent(value)) as Partial<SavedCurrentBus>;
+    if ((saved.direction !== "to-tarragona" && saved.direction !== "to-vilanova")
+      || typeof saved.departureTime !== "string"
+      || !timetables[saved.direction].departures.includes(saved.departureTime)
+      || typeof saved.expiresAt !== "number"
+      || !Number.isFinite(saved.expiresAt)
+      || saved.expiresAt <= Date.now()) {
+      clearCurrentBusCookie();
+      return null;
+    }
+    return { direction: saved.direction, departureTime: saved.departureTime, expiresAt: saved.expiresAt, reinforcement: saved.reinforcement === true };
+  } catch {
+    clearCurrentBusCookie();
+    return null;
+  }
+}
+
+function saveCurrentBusCookie(direction: Direction, departureTime: string, reinforcement: boolean): SavedCurrentBus | null {
+  const timetable = timetables[direction];
+  if (!timetable.departures.includes(departureTime)) return null;
+  const [hours, minutes] = departureTime.split(":").map(Number);
+  const todayDeparture = new Date();
+  todayDeparture.setHours(hours, minutes, 0, 0);
+  const expiresAt = todayDeparture.getTime() + (timetable.stopOffsets.at(-1) ?? 75) * 60_000;
+  const maxAge = Math.floor((expiresAt - Date.now()) / 1_000);
+  if (maxAge <= 0) {
+    clearCurrentBusCookie();
+    return null;
+  }
+  const saved = { direction, departureTime, expiresAt, reinforcement };
+  document.cookie = `${CURRENT_BUS_COOKIE}=${encodeURIComponent(JSON.stringify(saved))}; Max-Age=${maxAge}; Path=/; SameSite=Lax${location.protocol === "https:" ? "; Secure" : ""}`;
+  return saved;
+}
+
 export default function App() {
-  const [direction, setDirection] = useState<Direction>("to-tarragona");
+  const [savedCurrentBus, setSavedCurrentBus] = useState<SavedCurrentBus | null>(() => readCurrentBusCookie());
+  const [direction, setDirection] = useState<Direction>(() => savedCurrentBus?.direction ?? "to-tarragona");
   const [reports, setReports] = useState<BusReport[]>([]);
+  const [reportsLoaded, setReportsLoaded] = useState(false);
   const [shareState, setShareState] = useState<"idle" | "requesting" | "sharing">("idle");
   const [myReportId, setMyReportId] = useState<string | null>(null);
-  const [draft, setDraft] = useState<Draft>(initialDraft);
+  const [draft, setDraft] = useState<Draft>(() => savedCurrentBus
+    ? { ...initialDraft, departureTime: savedCurrentBus.departureTime, reinforcement: savedCurrentBus.reinforcement }
+    : initialDraft);
   const [notice, setNotice] = useState("");
   const [loadingReports, setLoadingReports] = useState(false);
   const [showOptions, setShowOptions] = useState(false);
@@ -71,13 +120,14 @@ export default function App() {
   const [trackedMapBusId, setTrackedMapBusId] = useState<string | null>(null);
   const [installPrompt, setInstallPrompt] = useState<InstallPrompt | null>(null);
   const [theme, setTheme] = useState<Theme>(currentTheme);
-  const [page, setPage] = useState<Page>(DEFAULT_PAGE);
+  const [page, setPage] = useState<Page>(() => savedCurrentBus ? MAP_PAGE : DEFAULT_PAGE);
   const pagerRef = useRef<HTMLElement>(null);
   const [now, setNow] = useState(() => new Date());
   const [showGhosts, setShowGhosts] = useState(loadShowGhosts);
 
   const mapExpandButtonRef = useRef<HTMLButtonElement>(null);
   const mapCloseButtonRef = useRef<HTMLButtonElement>(null);
+  const restoredCurrentBusRef = useRef<string | null>(null);
   const sessionRef = useRef<ShareSession | null>(null);
   const watchRef = useRef<number | null>(null);
   const heartbeatRef = useRef<number | null>(null);
@@ -106,6 +156,7 @@ export default function App() {
     } catch {
       if (!quiet) setNotice("No se pudo actualizar el mapa. Revisa la conexión e inténtalo de nuevo.");
     } finally {
+      setReportsLoaded(true);
       if (!quiet) setLoadingReports(false);
     }
   }, []);
@@ -169,6 +220,10 @@ export default function App() {
     setDraft((current) => ({ ...current, [key]: value }));
   };
 
+  function rememberCurrentBus(departureTime: string, reinforcement = draftRef.current.reinforcement) {
+    setSavedCurrentBus(saveCurrentBusCookie(directionRef.current, departureTime, reinforcement));
+  }
+
   const activeReports = useMemo(() => {
     const nowMs = now.getTime();
     const current = reports
@@ -217,6 +272,34 @@ export default function App() {
     [showGhosts, direction, now, activeReports],
   );
 
+  useEffect(() => {
+    if (!savedCurrentBus || !reportsLoaded) return;
+    const key = `${savedCurrentBus.direction}:${savedCurrentBus.departureTime}:${savedCurrentBus.expiresAt}`;
+    if (restoredCurrentBusRef.current === key) return;
+    restoredCurrentBusRef.current = key;
+    const report = activeReports.find((item) => (item.tripDepartureTime ?? item.departureTime) === savedCurrentBus.departureTime);
+    const ghost = ghosts.find((item) => item.departureTime === savedCurrentBus.departureTime);
+    const busId = report?.id ?? ghost?.id ?? null;
+    setTrackedMapBusId(busId);
+    setFollowMapBus(busId !== null);
+    setMapExpanded(true);
+    goToPage(MAP_PAGE);
+  }, [savedCurrentBus, reportsLoaded, activeReports, ghosts]);
+
+  useEffect(() => {
+    if (!savedCurrentBus || now.getTime() < savedCurrentBus.expiresAt) return;
+    clearCurrentBusCookie();
+    setSavedCurrentBus(null);
+    restoredCurrentBusRef.current = null;
+    setDraft((current) => current.departureTime === savedCurrentBus.departureTime
+      ? { ...current, departureTime: "", reinforcement: false }
+      : current);
+    setTrackedMapBusId(null);
+    setMapExpanded(false);
+    setNotice("El trayecto guardado ha llegado a su hora prevista y se ha cancelado.");
+    if (sessionRef.current) void stopSharing(true);
+  }, [savedCurrentBus, now]);
+
   function toggleGhosts() {
     const next = !showGhosts;
     setShowGhosts(next);
@@ -225,6 +308,7 @@ export default function App() {
 
   function claimGhostTrip(ghost: GhostBus) {
     setDraftValue("departureTime", ghost.departureTime);
+    rememberCurrentBus(ghost.departureTime);
     setShowOptions(true);
     window.setTimeout(() => document.querySelector(".share-card")?.scrollIntoView({ behavior: "smooth", block: "center" }), 0);
   }
@@ -395,7 +479,7 @@ export default function App() {
     }, 30_000);
   }
 
-  async function stopSharing() {
+  async function stopSharing(expiredTrip = false) {
     if (watchRef.current !== null) navigator.geolocation.clearWatch(watchRef.current);
     watchRef.current = null;
     if (heartbeatRef.current !== null) window.clearInterval(heartbeatRef.current);
@@ -414,14 +498,18 @@ export default function App() {
           method: "DELETE",
           headers: { "x-share-token": session.token },
         });
-        setNotice(response.ok || response.status === 404
-          ? "Has dejado de compartir y la señal se ha retirado del mapa."
-          : "Has dejado de enviar ubicación. La última señal seguirá visible como estimación hasta 20 min.");
+        setNotice(expiredTrip
+          ? "El trayecto ha llegado a su hora prevista y se ha dejado de compartir."
+          : response.ok || response.status === 404
+            ? "Has dejado de compartir y la señal se ha retirado del mapa."
+            : "Has dejado de enviar ubicación. La última señal seguirá visible como estimación hasta 20 min.");
       } catch {
-        setNotice("Has dejado de enviar ubicación. Sin conexión, la última señal seguirá visible como estimación hasta 20 min.");
+        setNotice(expiredTrip
+          ? "El trayecto ha llegado a su hora prevista y se ha dejado de compartir; sin conexión, la última señal puede seguir como estimación hasta 20 min."
+          : "Has dejado de enviar ubicación. Sin conexión, la última señal seguirá visible como estimación hasta 20 min.");
       }
     } else {
-      setNotice("Has dejado de compartir.");
+      setNotice(expiredTrip ? "El trayecto ha llegado a su hora prevista y se ha cancelado." : "Has dejado de compartir.");
     }
   }
 
@@ -450,6 +538,9 @@ export default function App() {
   async function chooseDirection(next: Direction) {
     if (shareState !== "idle" || next === direction) return;
     setDirection(next);
+    clearCurrentBusCookie();
+    setSavedCurrentBus(null);
+    restoredCurrentBusRef.current = null;
     setScheduleStopIndex(0);
     setExpandedStopIndex(null);
     setDraftValue("departureTime", "");
@@ -486,6 +577,18 @@ export default function App() {
   </section>
   );
 
+  const legalKind = legalKindFromPath(window.location.pathname);
+  if (legalKind) return <div className="app-shell legal-shell">
+    <header className="topbar">
+      <a className="brand" href="/" aria-label="MapGarraf, inicio"><span className="brand-mark"><BusGarrafIcon size={40} /></span><span><strong>MapGarraf</strong><small>BUSGARRAF · COMUNIDAD</small></span></a>
+      <div className="topbar-actions">
+        <button className="icon-button" onClick={toggleTheme} aria-label={theme === "dark" ? "Activar modo claro" : "Activar modo oscuro"}>{theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}</button>
+        <a className="icon-button legal-home-button" href="/" aria-label="Volver al mapa"><MapPinned size={18} /></a>
+      </div>
+    </header>
+    <LegalPage kind={legalKind} />
+  </div>;
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -517,6 +620,7 @@ export default function App() {
                 // The selected chip shows this service at the chosen stop; the
                 // timing model needs its departure from the route's first stop.
                 setDraftValue("departureTime", currentDirection.departures[index]);
+                rememberCurrentBus(currentDirection.departures[index]);
                 if (sessionRef.current) void updateReport({ departureTime: currentDirection.departures[index] });
                 setShowOptions(true);
                 goToPage(MAP_PAGE);
@@ -556,6 +660,12 @@ export default function App() {
               onChange={(event) => {
                 const value = event.target.value;
                 setDraftValue("departureTime", value);
+                if (value) rememberCurrentBus(value);
+                else {
+                  clearCurrentBusCookie();
+                  setSavedCurrentBus(null);
+                  restoredCurrentBusRef.current = null;
+                }
                 if (sessionRef.current) void updateReport({ departureTime: value });
               }}
             >
@@ -593,7 +703,11 @@ export default function App() {
                 type="button"
                 className={`reinforcement-toggle${draft.reinforcement ? " is-selected" : ""}`}
                 aria-pressed={draft.reinforcement}
-                onClick={() => void updateReport({ reinforcement: !draft.reinforcement })}
+                onClick={() => {
+                  const reinforcement = !draft.reinforcement;
+                  void updateReport({ reinforcement });
+                  if (draft.departureTime) rememberCurrentBus(draft.departureTime, reinforcement);
+                }}
               >
                 <span className="reinforcement-toggle-icon"><BusFront size={19} /></span>
                 <span className="reinforcement-toggle-copy"><strong>Bus de refuerzo</strong><small>{draft.reinforcement ? "Marcado para este bus" : "Marca si es un servicio adicional"}</small></span>
