@@ -18,6 +18,7 @@ const liveForMs = 60 * 1000;
 const estimateForMs = 20 * 60 * 1000;
 const directionSchema = z.enum(["to-tarragona", "to-vilanova"]);
 const occupancySchema = z.enum(["low", "medium", "high"]).nullable().optional();
+const reinforcementSchema = z.boolean().optional();
 
 fs.mkdirSync(path.dirname(dbPath), { recursive: true });
 const db = new Database(dbPath);
@@ -34,6 +35,7 @@ db.exec(`
     departure_time TEXT,
     vehicle_label TEXT,
     occupancy TEXT CHECK (occupancy IS NULL OR occupancy IN ('low', 'medium', 'high')),
+    reinforcement INTEGER NOT NULL DEFAULT 0 CHECK (reinforcement IN (0, 1)),
     delay_minutes INTEGER,
     created_at INTEGER NOT NULL,
     updated_at INTEGER NOT NULL
@@ -41,6 +43,9 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS bus_reports_direction_updated
     ON bus_reports(direction, updated_at);
 `);
+if (!db.prepare("PRAGMA table_info(bus_reports)").all().some((column) => column.name === "reinforcement")) {
+  db.exec("ALTER TABLE bus_reports ADD COLUMN reinforcement INTEGER NOT NULL DEFAULT 0 CHECK (reinforcement IN (0, 1))");
+}
 
 const app = express();
 const trustedProxies = Number(process.env.TRUST_PROXY || 0);
@@ -108,6 +113,10 @@ const reportInput = z.object({
   accuracy: z.number().finite().min(0).max(100_000).optional(),
   departureTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).nullable().optional(),
   occupancy: occupancySchema,
+  reinforcement: reinforcementSchema,
+});
+const createReportInput = reportInput.extend({
+  departureTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
 });
 
 function publicReport(row, now = Date.now()) {
@@ -121,6 +130,7 @@ function publicReport(row, now = Date.now()) {
     departureTime: row.departure_time,
     // Kept as null for API compatibility; punctuality is calculated by clients.
     occupancy: row.occupancy,
+    reinforcement: Boolean(row.reinforcement),
     delayMinutes: null,
     lastSeen: new Date(row.updated_at).toISOString(),
     ageSeconds,
@@ -166,16 +176,16 @@ app.get("/api/vehicles", (req, res) => {
 });
 
 app.post("/api/vehicles", writeLimiter, (req, res) => {
-  const input = parseBody(reportInput, req, res);
+  const input = parseBody(createReportInput, req, res);
   if (!input) return;
   const id = crypto.randomUUID();
   const shareToken = crypto.randomBytes(32).toString("base64url");
   const now = Date.now();
   db.prepare(`
     INSERT INTO bus_reports
-      (id, token_hash, direction, latitude, longitude, accuracy, departure_time, vehicle_label, occupancy, delay_minutes, created_at, updated_at)
+      (id, token_hash, direction, latitude, longitude, accuracy, departure_time, vehicle_label, occupancy, reinforcement, delay_minutes, created_at, updated_at)
     VALUES
-      (@id, @token_hash, @direction, @latitude, @longitude, @accuracy, @departure_time, @vehicle_label, @occupancy, @delay_minutes, @created_at, @updated_at)
+      (@id, @token_hash, @direction, @latitude, @longitude, @accuracy, @departure_time, @vehicle_label, @occupancy, @reinforcement, @delay_minutes, @created_at, @updated_at)
   `).run({
     id,
     token_hash: crypto.createHash("sha256").update(shareToken).digest("hex"),
@@ -186,6 +196,7 @@ app.post("/api/vehicles", writeLimiter, (req, res) => {
     departure_time: input.departureTime ?? null,
     vehicle_label: null,
     occupancy: input.occupancy ?? null,
+    reinforcement: input.reinforcement ? 1 : 0,
     delay_minutes: null,
     created_at: now,
     updated_at: now,
@@ -200,6 +211,7 @@ app.patch("/api/vehicles/:id", writeLimiter, (req, res) => {
   const partialInput = reportInput.omit({ direction: true }).partial();
   const input = parseBody(partialInput, req, res);
   if (!input) return;
+  if (input.departureTime === null) return res.status(400).json({ error: "Selecciona la hora de salida del bus." });
   if ((input.latitude === undefined) !== (input.longitude === undefined)) {
     return res.status(400).json({ error: "Envía latitud y longitud juntas." });
   }
@@ -211,13 +223,14 @@ app.patch("/api/vehicles/:id", writeLimiter, (req, res) => {
     departure_time: input.departureTime === undefined ? report.departure_time : input.departureTime,
     vehicle_label: null,
     occupancy: input.occupancy === undefined ? report.occupancy : input.occupancy,
+    reinforcement: input.reinforcement === undefined ? report.reinforcement : (input.reinforcement ? 1 : 0),
     delay_minutes: null,
     updated_at: input.latitude === undefined ? report.updated_at : now,
     id: report.id,
   };
   db.prepare(`
     UPDATE bus_reports SET latitude = @latitude, longitude = @longitude, accuracy = @accuracy,
-      departure_time = @departure_time, vehicle_label = @vehicle_label, occupancy = @occupancy,
+      departure_time = @departure_time, vehicle_label = @vehicle_label, occupancy = @occupancy, reinforcement = @reinforcement,
       delay_minutes = @delay_minutes, updated_at = @updated_at WHERE id = @id
   `).run(fields);
   res.json({ report: publicReport(db.prepare("SELECT * FROM bus_reports WHERE id = ?").get(report.id), now) });

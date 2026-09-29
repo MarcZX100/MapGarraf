@@ -14,6 +14,7 @@ export type BusReport = {
   accuracy: number | null;
   departureTime: string | null;
   occupancy: "low" | "medium" | "high" | null;
+  reinforcement?: boolean;
   delayMinutes: number | null;
   delayBasis?: "selected-departure" | "inferred-departure" | null;
   tripDepartureTime?: string | null;
@@ -227,11 +228,11 @@ function reportIcon(report: BusReport) {
   const baseTitle = "Bus compartido";
   const status = getReportStatus(report.delayMinutes, report.delayBasis);
   const markerLabel = escapeHtml(report.estimated ? `Estimado · ${status.markerLabel}` : status.markerLabel);
-  const markerDescription = escapeHtml(`${baseTitle}${report.estimated ? " (posición estimada)" : ""}: ${status.label}`);
+  const markerDescription = escapeHtml(`${report.reinforcement ? "Bus de refuerzo" : baseTitle}${report.estimated ? " (posición estimada)" : ""}: ${status.label}`);
   return L.divIcon({
     className: "bus-map-icon-wrap",
-    html: `<span class="bus-map-marker${report.estimated ? " is-estimated" : ""}" role="img" aria-label="${markerDescription}" title="${markerDescription}">
-      <span class="bus-map-status bus-map-status--${status.kind}">${markerLabel}</span>
+    html: `<span class="bus-map-marker${report.estimated ? " is-estimated" : ""}${report.reinforcement ? " is-reinforcement" : ""}" role="img" aria-label="${markerDescription}" title="${markerDescription}">
+      <span class="bus-map-status bus-map-status--${status.kind}${report.reinforcement ? " bus-map-status--reinforcement" : ""}">${report.reinforcement ? "✚ Refuerzo" : markerLabel}</span>
       <span class="bus-map-pin bus-map-pin--${status.kind}" aria-hidden="true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 16V8.5A2.5 2.5 0 0 1 7.5 6h9A2.5 2.5 0 0 1 19 8.5V16"/><path d="M5 11h14M8 16v2m8-2v2M7.5 18h9A2.5 2.5 0 0 0 19 15.5V13H5v2.5A2.5 2.5 0 0 0 7.5 18Z"/><path d="M8 8.5h.01M16 8.5h.01"/></svg>
       </span>
@@ -251,10 +252,10 @@ function reportPopupHtml(report: BusReport) {
   const nextStop = report.nextStop ? `<br>Próxima parada: ${escapeHtml(report.nextStop)}${report.minutesToNextStop !== null && report.minutesToNextStop !== undefined ? ` · ~${report.minutesToNextStop} min` : ""}.` : "";
   if (report.estimated) {
     const between = report.previousStop && report.nextStop ? `<br>Ahora estaría entre ${escapeHtml(report.previousStop)} y ${escapeHtml(report.nextStop)}.` : "";
-    return `<strong>${title} · posición estimada</strong><br><span class="popup-status popup-status--${status.kind}">${escapeHtml(status.label)}</span>${between}${nextStop}<br>Última posición real hace ${minutes} min${departure}.<br><small>Posición y retraso estimados con horario publicado; no son datos oficiales.</small>`;
+    return `<strong>${title} · posición estimada</strong><br>${report.reinforcement ? `<span class="reinforcement-popup">✚ REFUERZO</span><br>` : ""}<span class="popup-status popup-status--${status.kind}">${escapeHtml(status.label)}</span>${between}${nextStop}<br>Última posición real hace ${minutes} min${departure}.<br><small>Posición y retraso estimados con horario publicado; no son datos oficiales.</small>`;
   }
   const age = report.ageSeconds < 60 ? "ahora" : `hace ${minutes} min`;
-  return `<strong>${title}</strong><br><span class="popup-status popup-status--${status.kind}">${escapeHtml(status.label)}</span>${nextStop}<br>${age}${departure}<br><small>Retraso estimado comparando GPS y horario publicado; no es oficial.</small>`;
+  return `<strong>${title}</strong><br>${report.reinforcement ? `<span class="reinforcement-popup">✚ REFUERZO</span><br>` : ""}<span class="popup-status popup-status--${status.kind}">${escapeHtml(status.label)}</span>${nextStop}<br>${age}${departure}<br><small>Retraso estimado comparando GPS y horario publicado; no es oficial.</small>`;
 }
 
 function accuracyCircle(point: L.LatLng, radius: number) {
