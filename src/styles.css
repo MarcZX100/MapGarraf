@@ -18,9 +18,19 @@
   --busgarraf-blue: #003c8c;
   --busgarraf-light-blue: #739cd2;
   --busgarraf-pale: #e8eff6;
+  --scrollbar-track: #e8eff6;
+  --scrollbar-thumb: #b6c9df;
+  --scrollbar-thumb-hover: #739cd2;
+  --scrollbar-thumb-active: #003c8c;
 }
 
-* { box-sizing: border-box; }
+* { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track); }
+*::-webkit-scrollbar { width: 9px; height: 9px; }
+*::-webkit-scrollbar-track { border-radius: 999px; background: var(--scrollbar-track); }
+*::-webkit-scrollbar-thumb { min-height: 28px; border: 2px solid var(--scrollbar-track); border-radius: 999px; background: var(--scrollbar-thumb); }
+*::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
+*::-webkit-scrollbar-thumb:active { background: var(--scrollbar-thumb-active); }
+*::-webkit-scrollbar-corner { background: var(--scrollbar-track); }
 html { min-width: 320px; scroll-behavior: smooth; scroll-padding-top: 20px; }
 body { min-width: 320px; min-height: 100vh; margin: 0; }
 button, input, select { font: inherit; }
@@ -29,8 +39,7 @@ button { color: inherit; }
 button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible { outline: 3px solid #739cd2; outline-offset: 3px; }
 
 .app-shell { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
-.pager { flex: 1 1 auto; min-height: 0; display: flex; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; overscroll-behavior-x: contain; scrollbar-width: none; }
-.pager::-webkit-scrollbar { display: none; }
+.pager { flex: 1 1 auto; min-height: 0; display: flex; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; overscroll-behavior-x: contain; }
 .page { flex: 0 0 100%; min-width: 0; overflow-y: auto; overscroll-behavior-y: contain; scroll-snap-align: start; scroll-snap-stop: always; padding-bottom: 24px; }
 .page-heading { padding: 26px 2px 18px; }
 .page-heading h1, .page-heading h2 { margin: 14px 0 0; font-family: "Segoe UI", Helvetica, Arial, sans-serif; font-size: clamp(30px, 8vw, 40px); line-height: 1.1; letter-spacing: -1.6px; font-weight: 800; }
@@ -331,7 +340,7 @@ h1 span { color: var(--teal); }
 @keyframes appear { from { opacity: 0; transform: translateY(-3px); } to { opacity: 1; transform: translateY(0); } }
 
 /* Dark theme: applied via data-theme="dark" on <html> (set by /theme-init.js and the topbar toggle). */
-:root[data-theme="dark"] { color-scheme: dark; --bg: #081426; --ink: #edf4ff; --muted: #a8bdd7; --teal: #739cd2; --teal-deep: #003c8c; --teal-pale: #172d4a; --line: #263d5d; --paper: #101e33; --busgarraf-blue: #003c8c; --busgarraf-light-blue: #739cd2; --busgarraf-pale: #e8eff6; }
+:root[data-theme="dark"] { color-scheme: dark; --bg: #081426; --ink: #edf4ff; --muted: #a8bdd7; --teal: #739cd2; --teal-deep: #003c8c; --teal-pale: #172d4a; --line: #263d5d; --paper: #101e33; --busgarraf-blue: #003c8c; --busgarraf-light-blue: #739cd2; --busgarraf-pale: #e8eff6; --scrollbar-track: #101e33; --scrollbar-thumb: #3b5577; --scrollbar-thumb-hover: #739cd2; --scrollbar-thumb-active: #9fc0ea; }
 [data-theme="dark"] .icon-button { background: var(--paper); color: #b5c6c1; }
 [data-theme="dark"] .icon-button:hover { background: #1f302c; color: #5fd0c0; }
 [data-theme="dark"] .brand small, [data-theme="dark"] .eyebrow, [data-theme="dark"] .intro p, [data-theme="dark"] .section-kicker, [data-theme="dark"] .distance-badge, [data-theme="dark"] .map-footnote, [data-theme="dark"] .live-pill, [data-theme="dark"] .empty-state p, [data-theme="dark"] .report-meta, [data-theme="dark"] .schedule-caption, [data-theme="dark"] .last-service, [data-theme="dark"] .stops-list li small, [data-theme="dark"] .trust-card p, [data-theme="dark"] .page-footer, [data-theme="dark"] .map-legend, [data-theme="dark"] .schedule-stop-select, [data-theme="dark"] .install-dialog p, [data-theme="dark"] .map-live-summary small, [data-theme="dark"] .leaflet-popup-content small, [data-theme="dark"] .bottom-link, [data-theme="dark"] .direction-arrow, [data-theme="dark"] .detail-title { color: #93a5a0; }
