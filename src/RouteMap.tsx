@@ -61,7 +61,9 @@ export default function RouteMap({ direction, stops, timetable, reports, ghosts,
 
   useEffect(() => {
     if (!elementRef.current || mapRef.current) return;
-    const map = L.map(elementRef.current, { zoomControl: false, scrollWheelZoom: true, touchZoom: true, attributionControl: true });
+    // Canvas keeps the long route geometry and stop hit areas in one renderer.
+    // Leaflet's SVG paths can be clipped/recreated during rapid pinch zooms and pans.
+    const map = L.map(elementRef.current, { zoomControl: false, scrollWheelZoom: true, touchZoom: true, attributionControl: true, preferCanvas: true });
     L.tileLayer(import.meta.env.VITE_TILE_URL || "https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · Rutas: <a href="https://project-osrm.org/">OSRM</a>',
