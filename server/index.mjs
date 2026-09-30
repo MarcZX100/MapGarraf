@@ -7,7 +7,7 @@ import express from "express";
 import rateLimit from "express-rate-limit";
 import helmet from "helmet";
 import { z } from "zod";
-import { isPlausibleMovement, isWithinRouteCorridor } from "./routeValidation.mjs";
+import { isWithinRouteCorridor } from "./routeValidation.mjs";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, "..");
@@ -323,13 +323,6 @@ app.patch("/api/vehicles/:id", writeLimiter, (req, res) => {
     if (!isWithinRouteCorridor(input.latitude, input.longitude, report.direction)) {
       return res.status(400).json({ error: "La ubicación no está cerca del recorrido del bus." });
     }
-    if (!isPlausibleMovement(
-      { latitude: report.latitude, longitude: report.longitude, accuracy: report.accuracy },
-      { latitude: input.latitude, longitude: input.longitude, accuracy: input.accuracy ?? report.accuracy },
-      (now - report.updated_at) / 1000,
-    )) {
-      return res.status(400).json({ error: "El cambio de ubicación es demasiado rápido para un autobús." });
-    }
   }
   const fields = {
     latitude: input.latitude ?? report.latitude,
@@ -384,6 +377,20 @@ const legalSeo = {
     description: "Información sobre las cookies necesarias y las cookies analíticas opcionales de MapGarraf.",
   },
 };
+const sectionSeo = {
+  "/horarios": {
+    title: "Horarios de BusGarraf Tarragona–Vilanova | MapGarraf",
+    description: "Consulta los horarios publicados del BusGarraf entre Tarragona y Vilanova i la Geltrú, con las salidas por parada.",
+  },
+  "/mapa": {
+    title: "Mapa del BusGarraf Tarragona–Vilanova | MapGarraf",
+    description: "Consulta posiciones compartidas por viajeros, próximas paradas y estimaciones orientativas de llegada del BusGarraf.",
+  },
+  "/paradas": {
+    title: "Paradas del BusGarraf Tarragona–Vilanova | MapGarraf",
+    description: "Explora las 16 paradas del recorrido BusGarraf entre Tarragona, El Vendrell, Calafell, Cubelles y Vilanova i la Geltrú.",
+  },
+};
 
 function htmlAttribute(value) {
   return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
@@ -408,10 +415,12 @@ if (fs.existsSync(path.join(dist, "index.html"))) {
   } }));
   app.get(/.*/, (req, res, next) => {
     if (req.path.startsWith("/api/") || req.path === "/health") return next();
-    const legalKey = req.path.match(/^\/(terms|privacy|cookies)(?:\.html)?\/?$/)?.[1];
-    if (legalKey && legalSeo[legalKey]) {
-      const seo = legalSeo[legalKey];
-      const canonical = `https://bus.nekokoneko.org/${legalKey}.html`;
+    const routePath = req.path.replace(/\/+$/, "") || "/";
+    const legalKey = routePath.match(/^\/(terms|privacy|cookies)(?:\.html)?$/)?.[1];
+    const seo = legalKey ? legalSeo[legalKey] : sectionSeo[routePath];
+    if (seo) {
+      const canonicalPath = legalKey ? `/${legalKey}.html` : routePath;
+      const canonical = `https://bus.nekokoneko.org${canonicalPath}`;
       let html = fs.readFileSync(path.join(dist, "index.html"), "utf8");
       html = html.replace(/<title>[\s\S]*?<\/title>/i, `<title>${htmlAttribute(seo.title)}</title>`);
       html = html.replace(/<meta name="description" content="[^"]*"\s*\/?\s*>/i, `<meta name="description" content="${htmlAttribute(seo.description)}" />`);

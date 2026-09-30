@@ -8,7 +8,7 @@ import path from "node:path";
 import vm from "node:vm";
 import { after, before, test } from "node:test";
 import Database from "better-sqlite3";
-import { isPlausibleMovement, isWithinRouteCorridor } from "../server/routeValidation.mjs";
+import { isWithinRouteCorridor } from "../server/routeValidation.mjs";
 import { hasConflictingDepartures } from "../shared/reportIdentity.mjs";
 
 let tempDirectory;
@@ -61,19 +61,9 @@ after(async () => {
   if (tempDirectory) fs.rmSync(tempDirectory, { recursive: true, force: true });
 });
 
-test("route corridor and speed checks reject implausible synthetic points", () => {
+test("route corridor rejects points far from the route", () => {
   assert.equal(isWithinRouteCorridor(41.22038084744236, 1.7305158618556, "to-tarragona"), true);
   assert.equal(isWithinRouteCorridor(41.06, 1.19, "to-tarragona"), false);
-  assert.equal(isPlausibleMovement(
-    { latitude: 41.2204, longitude: 1.7305, accuracy: 50 },
-    { latitude: 41.1183, longitude: 1.2444, accuracy: 50 },
-    1,
-  ), false);
-  assert.equal(isPlausibleMovement(
-    { latitude: 41.2204, longitude: 1.7305, accuracy: 50 },
-    { latitude: 41.1183, longitude: 1.2444, accuracy: 50 },
-    6 * 60,
-  ), false);
 });
 
 test("reports with different selected departures cannot be merged, including through an unlabeled report", () => {

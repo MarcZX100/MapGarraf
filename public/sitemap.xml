@@ -6,6 +6,21 @@
     <priority>1.0</priority>
   </url>
   <url>
+    <loc>https://bus.nekokoneko.org/horarios</loc>
+    <lastmod>2026-09-30</lastmod>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://bus.nekokoneko.org/mapa</loc>
+    <lastmod>2026-09-30</lastmod>
+    <priority>0.8</priority>
+  </url>
+  <url>
+    <loc>https://bus.nekokoneko.org/paradas</loc>
+    <lastmod>2026-09-30</lastmod>
+    <priority>0.8</priority>
+  </url>
+  <url>
     <loc>https://bus.nekokoneko.org/busgarraf-vilanova-tarragona.html</loc>
     <lastmod>2026-09-29</lastmod>
     <priority>0.9</priority>

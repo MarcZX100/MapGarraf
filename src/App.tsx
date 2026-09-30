@@ -59,6 +59,20 @@ const initialDraft: Draft = { departureTime: "", occupancy: null, reinforcement:
 type Page = 0 | 1 | 2;
 const SCHEDULE_PAGE = 0, MAP_PAGE = 1, STOPS_PAGE = 2, PAGE_COUNT = 3;
 const DEFAULT_PAGE: Page = SCHEDULE_PAGE;
+const PAGE_PATHS: Record<Page, string> = {
+  [SCHEDULE_PAGE]: "/horarios",
+  [MAP_PAGE]: "/mapa",
+  [STOPS_PAGE]: "/paradas",
+};
+
+function pageFromPath(pathname: string): Page | null {
+  const path = pathname.replace(/\/+$/, "") || "/";
+  if (path === "/" || path === PAGE_PATHS[SCHEDULE_PAGE]) return SCHEDULE_PAGE;
+  if (path === PAGE_PATHS[MAP_PAGE]) return MAP_PAGE;
+  if (path === PAGE_PATHS[STOPS_PAGE]) return STOPS_PAGE;
+  return null;
+}
+
 const NAV_ITEMS = [
   { page: SCHEDULE_PAGE, label: "Horarios", Icon: Clock3 },
   { page: MAP_PAGE, label: "Mapa", Icon: MapPinned },
@@ -179,6 +193,7 @@ async function retryPendingDeletes() {
 }
 
 export default function App() {
+  const [routePath, setRoutePath] = useState(() => window.location.pathname);
   const [savedCurrentBus, setSavedCurrentBus] = useState<SavedCurrentBus | null>(() => readCurrentBusCookie());
   const [direction, setDirection] = useState<Direction>(() => savedCurrentBus?.direction ?? "to-tarragona");
   const [reports, setReports] = useState<BusReport[]>([]);
@@ -205,7 +220,11 @@ export default function App() {
   const [trackedMapBusId, setTrackedMapBusId] = useState<string | null>(null);
   const [installPrompt, setInstallPrompt] = useState<InstallPrompt | null>(null);
   const [theme, setTheme] = useState<Theme>(currentTheme);
-  const [page, setPage] = useState<Page>(() => savedCurrentBus?.resumeSharing ? MAP_PAGE : DEFAULT_PAGE);
+  const [page, setPage] = useState<Page>(() => {
+    const initialRoutePage = pageFromPath(window.location.pathname);
+    if (window.location.pathname === "/" && savedCurrentBus?.resumeSharing) return MAP_PAGE;
+    return initialRoutePage ?? (savedCurrentBus?.resumeSharing ? MAP_PAGE : DEFAULT_PAGE);
+  });
   const pagerRef = useRef<HTMLElement>(null);
   const [now, setNow] = useState(() => new Date());
   const [showGhosts, setShowGhosts] = useState(loadShowGhosts);
@@ -226,6 +245,7 @@ export default function App() {
   const draftRef = useRef(draft);
   const directionRef = useRef(direction);
   const pageRef = useRef(page);
+  const scrollHistoryTimerRef = useRef<number | null>(null);
   pageRef.current = page;
   draftRef.current = draft;
   directionRef.current = direction;
@@ -307,12 +327,52 @@ export default function App() {
     return () => window.removeEventListener("resize", snapToPage);
   }, []);
 
+  useEffect(() => {
+    const restoreLocation = () => {
+      const nextPath = window.location.pathname;
+      setRoutePath(nextPath);
+      const targetPage = pageFromPath(nextPath);
+      if (targetPage === null) {
+        setMapExpanded(false);
+        return;
+      }
+      setPage(targetPage);
+      if (targetPage !== MAP_PAGE) setMapExpanded(false);
+      window.requestAnimationFrame(() => {
+        const pager = pagerRef.current;
+        if (pager) pager.scrollTo({ left: pager.clientWidth * targetPage, behavior: "instant" });
+      });
+    };
+    window.addEventListener("popstate", restoreLocation);
+    return () => window.removeEventListener("popstate", restoreLocation);
+  }, []);
+
   function onPagerScroll(event: React.UIEvent<HTMLElement>) {
     const { scrollLeft, clientWidth } = event.currentTarget;
-    if (clientWidth) setPage(Math.min(PAGE_COUNT - 1, Math.max(0, Math.round(scrollLeft / clientWidth))) as Page);
+    if (!clientWidth) return;
+    const nextPage = Math.min(PAGE_COUNT - 1, Math.max(0, Math.round(scrollLeft / clientWidth))) as Page;
+    setPage(nextPage);
+    if (scrollHistoryTimerRef.current !== null) window.clearTimeout(scrollHistoryTimerRef.current);
+    scrollHistoryTimerRef.current = window.setTimeout(() => {
+      const pager = pagerRef.current;
+      if (!pager || !pager.clientWidth) return;
+      const settledPage = Math.min(PAGE_COUNT - 1, Math.max(0, Math.round(pager.scrollLeft / pager.clientWidth))) as Page;
+      const settledPath = PAGE_PATHS[settledPage];
+      if (window.location.pathname !== settledPath || window.location.search) {
+        window.history.pushState(null, "", settledPath);
+        setRoutePath(settledPath);
+      }
+    }, 180);
   }
 
-  function goToPage(target: Page) {
+  function goToPage(target: Page, historyMode: "push" | "replace" = "push") {
+    const nextPath = PAGE_PATHS[target];
+    if (window.location.pathname !== nextPath || window.location.search) {
+      window.history[historyMode === "push" ? "pushState" : "replaceState"](null, "", nextPath);
+      setRoutePath(nextPath);
+    }
+    setPage(target);
+    if (target !== MAP_PAGE) setMapExpanded(false);
     const pager = pagerRef.current;
     if (!pager) return;
     const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
@@ -411,7 +471,7 @@ export default function App() {
     setTrackedMapBusId(busId);
     setFollowMapBus(busId !== null);
     setMapExpanded(true);
-    goToPage(MAP_PAGE);
+    goToPage(MAP_PAGE, "replace");
     if (savedCurrentBus.resumeSharing && autoShareAttemptedRef.current !== key) {
       autoShareAttemptedRef.current = key;
       startSharing();
@@ -756,10 +816,10 @@ export default function App() {
   </section>
   );
 
-  const legalKind = legalKindFromPath(window.location.pathname);
+  const legalKind = legalKindFromPath(routePath);
   useEffect(() => {
     const seo = legalKind ? LEGAL_SEO[legalKind] : PAGE_SEO[page === SCHEDULE_PAGE ? "schedule" : page === MAP_PAGE ? "map" : "stops"];
-    const canonicalPath = legalKind ? `/${legalKind}.html` : "/";
+    const canonicalPath = legalKind ? `/${legalKind}.html` : PAGE_PATHS[page];
     document.title = seo.title;
     const update = (selector: string, value: string, attribute = "content") => {
       const element = document.querySelector<HTMLMetaElement | HTMLLinkElement>(selector);
@@ -787,7 +847,11 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <a className="brand" href="#inicio" aria-label="MapGarraf, inicio" onClick={(event) => { event.preventDefault(); goToPage(DEFAULT_PAGE); }}>
+        <a className="brand" href={PAGE_PATHS[DEFAULT_PAGE]} aria-label="MapGarraf, inicio" onClick={(event) => {
+          if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+          event.preventDefault();
+          goToPage(DEFAULT_PAGE);
+        }}>
           <span className="brand-mark"><BusGarrafIcon size={40} /></span>
           <span><strong>MapGarraf</strong><small>BUSGARRAF · COMUNIDAD</small></span>
         </a>
@@ -1108,9 +1172,13 @@ export default function App() {
 
       <nav className="bottom-nav" aria-label="Secciones">
         {NAV_ITEMS.map(({ page: target, label, Icon }) => (
-          <button key={target} className={`bottom-link ${page === target ? "active" : ""}`} aria-current={page === target ? "page" : undefined} onClick={() => goToPage(target)}>
+          <a key={target} href={PAGE_PATHS[target]} className={`bottom-link ${page === target ? "active" : ""}`} aria-current={page === target ? "page" : undefined} onClick={(event) => {
+            if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+            event.preventDefault();
+            goToPage(target);
+          }}>
             <Icon size={18} /><span>{label}</span>
-          </button>
+          </a>
         ))}
       </nav>
 
