@@ -216,6 +216,15 @@ export function estimateCurrentPosition(direction: Direction, report: { latitude
   return positionAtScheduleMinute(model, scheduled + report.ageSeconds / 60);
 }
 
+/** Minutes remaining until the bus reaches the terminus, based on its last GPS point and its age. */
+export function estimateMinutesUntilArrival(direction: Direction, report: { latitude: number; longitude: number; ageSeconds: number }): number | null {
+  const model = buildModel(direction);
+  const elapsedAtLastFix = scheduledMinuteAt(model, report.latitude, report.longitude);
+  if (elapsedAtLastFix === null) return null;
+  const routeDuration = model.offsets[model.offsets.length - 1];
+  return routeDuration - elapsedAtLastFix - Math.max(0, report.ageSeconds) / 60;
+}
+
 /**
  * Estimates timetable deviation and the next stop from a GPS fix. A selected
  * departure is the strongest basis; otherwise the closest plausible trip is

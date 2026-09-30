@@ -53,7 +53,21 @@ db.exec(`
   );
   CREATE INDEX IF NOT EXISTS bus_reports_direction_updated
     ON bus_reports(direction, updated_at);
+  CREATE TABLE IF NOT EXISTS delay_reports (
+    id TEXT PRIMARY KEY,
+    direction TEXT NOT NULL CHECK (direction IN ('to-tarragona', 'to-vilanova')),
+    departure_time TEXT NOT NULL,
+    delay_minutes INTEGER NOT NULL CHECK (delay_minutes BETWEEN 1 AND 180),
+    indefinite INTEGER NOT NULL DEFAULT 0 CHECK (indefinite IN (0, 1)),
+    stage TEXT NOT NULL CHECK (stage IN ('not-arrived', 'in-route')),
+    created_at INTEGER NOT NULL
+  );
+  CREATE INDEX IF NOT EXISTS delay_reports_direction_created
+    ON delay_reports(direction, created_at);
 `);
+if (!db.prepare("PRAGMA table_info(delay_reports)").all().some((column) => column.name === "indefinite")) {
+  db.exec("ALTER TABLE delay_reports ADD COLUMN indefinite INTEGER NOT NULL DEFAULT 0 CHECK (indefinite IN (0, 1))");
+}
 if (!db.prepare("PRAGMA table_info(bus_reports)").all().some((column) => column.name === "reinforcement")) {
   db.exec("ALTER TABLE bus_reports ADD COLUMN reinforcement INTEGER NOT NULL DEFAULT 0 CHECK (reinforcement IN (0, 1))");
 }
@@ -124,6 +138,13 @@ const createLimiter = rateLimit({
   legacyHeaders: false,
   handler: rateLimitHandler("Se han creado demasiadas señales desde esta conexión. Espera un minuto antes de intentarlo de nuevo."),
 });
+const delayLimiter = rateLimit({
+  windowMs: 60_000,
+  limit: 5,
+  standardHeaders: "draft-8",
+  legacyHeaders: false,
+  handler: rateLimitHandler("Has enviado varios avisos de retraso. Espera un minuto antes de volver a enviar otro."),
+});
 app.use("/api", readLimiter);
 
 const reportInput = z.object({
@@ -139,6 +160,12 @@ const reportInput = z.object({
 const createReportInput = reportInput.extend({
   accuracy: z.number().finite().min(0).max(maxGpsAccuracyMeters),
   departureTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+});
+const delayReportInput = z.object({
+  direction: directionSchema,
+  departureTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/),
+  delayMinutes: z.number().int().min(1).max(180).nullable(),
+  stage: z.enum(["not-arrived", "in-route"]),
 });
 
 function publicReport(row, now = Date.now()) {
@@ -210,6 +237,33 @@ app.get("/api/vehicles", (req, res) => {
     .prepare("SELECT * FROM bus_reports WHERE direction = ? AND updated_at >= ? ORDER BY updated_at DESC LIMIT 60")
     .all(direction.data, now - estimateForMs);
   res.json({ reports: rows.map((row) => publicReport(row, now)), liveForSeconds: liveForMs / 1000, estimateForSeconds: estimateForMs / 1000 });
+});
+
+app.get("/api/delays", (req, res) => {
+  const direction = directionSchema.safeParse(req.query.direction);
+  if (!direction.success) return res.status(400).json({ error: "Indica un sentido válido." });
+  const now = Date.now();
+  const maxAge = 120 * 60 * 1000;
+  db.prepare("DELETE FROM delay_reports WHERE created_at < ?").run(now - 24 * 60 * 60 * 1000);
+  const reports = db.prepare(`
+    SELECT id, direction, departure_time AS departureTime, CASE WHEN indefinite = 1 THEN NULL ELSE delay_minutes END AS delayMinutes, stage, created_at AS createdAt
+    FROM delay_reports WHERE direction = ? AND created_at >= ? ORDER BY created_at DESC LIMIT 300
+  `).all(direction.data, now - maxAge).map((row) => ({ ...row, createdAt: new Date(row.createdAt).toISOString() }));
+  res.json({ reports, activeForSeconds: maxAge / 1000 });
+});
+
+app.post("/api/delays", delayLimiter, writeLimiter, (req, res) => {
+  const input = parseBody(delayReportInput, req, res);
+  if (!input) return;
+  const now = Date.now();
+  db.prepare("DELETE FROM delay_reports WHERE created_at < ?").run(now - 24 * 60 * 60 * 1000);
+  const activeCount = db.prepare("SELECT COUNT(*) AS count FROM delay_reports WHERE created_at >= ?").get(now - 120 * 60 * 1000).count;
+  if (activeCount >= 500) return res.status(429).json({ error: "Hay muchos avisos activos. Inténtalo de nuevo más tarde." });
+  const id = crypto.randomUUID();
+  db.prepare(`INSERT INTO delay_reports (id, direction, departure_time, delay_minutes, indefinite, stage, created_at)
+    VALUES (@id, @direction, @departure_time, @delay_minutes, @indefinite, @stage, @created_at)`)
+    .run({ id, direction: input.direction, departure_time: input.departureTime, delay_minutes: input.delayMinutes ?? 1, indefinite: input.delayMinutes === null ? 1 : 0, stage: input.stage, created_at: now });
+  res.status(201).json({ report: { id, direction: input.direction, departureTime: input.departureTime, delayMinutes: input.delayMinutes, stage: input.stage, createdAt: new Date(now).toISOString() } });
 });
 
 app.post("/api/vehicles", createLimiter, writeLimiter, (req, res) => {
@@ -308,13 +362,45 @@ app.delete("/api/vehicles/:id", writeLimiter, (req, res) => {
 
 // Old coordinates are removed on startup and are never shown after three minutes without a refresh.
 db.prepare("DELETE FROM bus_reports WHERE updated_at < ?").run(Date.now() - 24 * 60 * 60 * 1000);
+db.prepare("DELETE FROM delay_reports WHERE created_at < ?").run(Date.now() - 24 * 60 * 60 * 1000);
 const cleanupTimer = setInterval(() => {
   db.prepare("DELETE FROM bus_reports WHERE updated_at < ?").run(Date.now() - 24 * 60 * 60 * 1000);
+  db.prepare("DELETE FROM delay_reports WHERE created_at < ?").run(Date.now() - 24 * 60 * 60 * 1000);
 }, 60 * 1000);
 cleanupTimer.unref();
 
 const dist = path.join(root, "dist");
+const legalSeo = {
+  terms: {
+    title: "Condiciones de uso | MapGarraf",
+    description: "Condiciones de uso de MapGarraf, herramienta comunitaria independiente para viajeros del BusGarraf.",
+  },
+  privacy: {
+    title: "Política de privacidad | MapGarraf",
+    description: "Información sobre los datos de ubicación y los avisos comunitarios tratados por MapGarraf.",
+  },
+  cookies: {
+    title: "Política de cookies | MapGarraf",
+    description: "Información sobre las cookies necesarias y las cookies analíticas opcionales de MapGarraf.",
+  },
+};
+
+function htmlAttribute(value) {
+  return value.replaceAll("&", "&amp;").replaceAll('"', "&quot;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
+}
+
 if (fs.existsSync(path.join(dist, "index.html"))) {
+  app.get("/busgarraf-vilanova-tarragona.html", (_req, res, next) => {
+    const guidePath = path.join(dist, "busgarraf-vilanova-tarragona.html");
+    const assetsPath = path.join(dist, "assets");
+    if (!fs.existsSync(guidePath) || !fs.existsSync(assetsPath)) return next();
+    const stylesheet = fs.readdirSync(assetsPath).find((file) => file.endsWith(".css"));
+    if (!stylesheet) return next();
+    const cssLink = `<link rel="stylesheet" href="/assets/${stylesheet}">`;
+    const html = fs.readFileSync(guidePath, "utf8").replace("<!-- MAPGARRAF-STYLES -->", cssLink);
+    res.setHeader("Cache-Control", "no-cache");
+    return res.type("html").send(html);
+  });
   app.use(express.static(dist, { index: false, maxAge: "1h", setHeaders: (res, filename) => {
     if (filename.endsWith("index.html") || filename.endsWith("sw.js") || filename.endsWith("manifest.webmanifest")) {
       res.setHeader("Cache-Control", "no-cache");
@@ -322,6 +408,22 @@ if (fs.existsSync(path.join(dist, "index.html"))) {
   } }));
   app.get(/.*/, (req, res, next) => {
     if (req.path.startsWith("/api/") || req.path === "/health") return next();
+    const legalKey = req.path.match(/^\/(terms|privacy|cookies)(?:\.html)?\/?$/)?.[1];
+    if (legalKey && legalSeo[legalKey]) {
+      const seo = legalSeo[legalKey];
+      const canonical = `https://bus.nekokoneko.org/${legalKey}.html`;
+      let html = fs.readFileSync(path.join(dist, "index.html"), "utf8");
+      html = html.replace(/<title>[\s\S]*?<\/title>/i, `<title>${htmlAttribute(seo.title)}</title>`);
+      html = html.replace(/<meta name="description" content="[^"]*"\s*\/?\s*>/i, `<meta name="description" content="${htmlAttribute(seo.description)}" />`);
+      html = html.replace(/<link rel="canonical" href="[^"]*"\s*\/?\s*>/i, `<link rel="canonical" href="${canonical}" />`);
+      html = html.replace(/<meta property="og:url" content="[^"]*"\s*\/?\s*>/i, `<meta property="og:url" content="${canonical}" />`);
+      html = html.replace(/<meta property="og:title" content="[^"]*"\s*\/?\s*>/i, `<meta property="og:title" content="${htmlAttribute(seo.title)}" />`);
+      html = html.replace(/<meta property="og:description" content="[^"]*"\s*\/?\s*>/i, `<meta property="og:description" content="${htmlAttribute(seo.description)}" />`);
+      html = html.replace(/<meta name="twitter:title" content="[^"]*"\s*\/?\s*>/i, `<meta name="twitter:title" content="${htmlAttribute(seo.title)}" />`);
+      html = html.replace(/<meta name="twitter:description" content="[^"]*"\s*\/?\s*>/i, `<meta name="twitter:description" content="${htmlAttribute(seo.description)}" />`);
+      res.setHeader("Cache-Control", "no-cache");
+      return res.type("html").send(html);
+    }
     res.sendFile(path.join(dist, "index.html"));
   });
 }

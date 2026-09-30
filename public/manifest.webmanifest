@@ -2,7 +2,7 @@
   "id": "/",
   "name": "MapGarraf | BusGarraf Tarragona ↔ Vilanova",
   "short_name": "MapGarraf",
-  "description": "Consulta paradas y horarios de BusGarraf entre Tarragona y Vilanova, mira ubicaciones compartidas y llegadas estimadas, o comparte tu posición para ayudar a otros viajeros.",
+  "description": "Consulta horarios y 16 paradas del BusGarraf entre Tarragona y Vilanova, además de posiciones compartidas y llegadas estimadas por viajeros.",
   "lang": "es-ES",
   "start_url": "/?source=pwa",
   "scope": "/",

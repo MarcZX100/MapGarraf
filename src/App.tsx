@@ -20,6 +20,7 @@ import {
   Radio,
   RefreshCw,
   Signal,
+  Send,
   Sun,
   Users,
   X,
@@ -29,7 +30,7 @@ import BusGarrafIcon from "./BusGarrafIcon";
 import RouteMap, { type BusReport } from "./RouteMap";
 import { directionLabel, officialScheduleUrl, officialTariffUrl, publishedPdfUrl, stops, timetables, type Direction } from "./data";
 import { getReportStatus } from "./reportStatus";
-import { estimateCurrentPosition, estimateRouteStatus, getGhostBuses, ghostsApplyToday, unclaimedGhosts, type GhostBus } from "./ghostBuses";
+import { estimateCurrentPosition, estimateMinutesUntilArrival, estimateRouteStatus, getGhostBuses, ghostsApplyToday, unclaimedGhosts, type GhostBus } from "./ghostBuses";
 import { getNextSharedArrival, getNextTheoreticalArrival } from "./stopArrivals";
 import LegalPage, { legalKindFromPath } from "./LegalPage";
 import { hasConflictingDepartures } from "../shared/reportIdentity.mjs";
@@ -38,12 +39,16 @@ type Occupancy = "low" | "medium" | "high" | null;
 type ShareSession = { id: string; token: string; deleteToken: string };
 type Draft = { departureTime: string; occupancy: Occupancy; reinforcement: boolean };
 type MapReport = BusReport & { supportCount: number; containsOwn: boolean };
+type DelayStage = "not-arrived" | "in-route";
+type DelayReport = { id: string; direction: Direction; departureTime: string; delayMinutes: number | null; stage: DelayStage; createdAt: string };
+type DelaySummary = { departureTime: string; stage: DelayStage; delayMinutes: number | null; count: number; createdAt: string };
 
 // The server flags a position as live for 1 minute; older ones are only served so the map can estimate.
 const LIVE_REPORT_SECONDS = 60;
 const ESTIMATED_REPORT_MATCH_DISTANCE_M = 2_500;
 const CURRENT_BUS_COOKIE = "mapgarraf-current-bus";
 const PENDING_DELETES_KEY = "mapgarraf-pending-report-deletes-v1";
+const SAVED_BUS_COOKIE_GRACE_MS = 24 * 60 * 60_000;
 type PendingDelete = { id: string; token: string; expiresAt: number };
 type SavedCurrentBus = { direction: Direction; departureTime: string; expiresAt: number; reinforcement: boolean; resumeSharing: boolean };
 type ApiError = Error & { status?: number };
@@ -59,6 +64,16 @@ const NAV_ITEMS = [
   { page: MAP_PAGE, label: "Mapa", Icon: MapPinned },
   { page: STOPS_PAGE, label: "Paradas", Icon: ListOrdered },
 ] as const satisfies ReadonlyArray<{ page: Page; label: string; Icon: typeof Clock3 }>;
+const PAGE_SEO = {
+  schedule: { title: "Horarios de BusGarraf Tarragona–Vilanova | MapGarraf", description: "Consulta los horarios publicados del BusGarraf entre Tarragona y Vilanova i la Geltrú, con las salidas por parada." },
+  map: { title: "Mapa del BusGarraf Tarragona–Vilanova | MapGarraf", description: "Consulta posiciones compartidas por viajeros, próximas paradas y estimaciones orientativas de llegada del BusGarraf." },
+  stops: { title: "Paradas del BusGarraf Tarragona–Vilanova | MapGarraf", description: "Explora las 16 paradas del recorrido BusGarraf entre Tarragona, El Vendrell, Calafell, Cubelles y Vilanova i la Geltrú." },
+} as const;
+const LEGAL_SEO = {
+  terms: { title: "Condiciones de uso | MapGarraf", description: "Condiciones de uso de MapGarraf, herramienta comunitaria independiente para viajeros del BusGarraf." },
+  privacy: { title: "Política de privacidad | MapGarraf", description: "Información sobre los datos de ubicación y los avisos comunitarios tratados por MapGarraf." },
+  cookies: { title: "Política de cookies | MapGarraf", description: "Información sobre las cookies necesarias y las cookies analíticas opcionales de MapGarraf." },
+} as const;
 
 function clearCurrentBusCookie() {
   document.cookie = `${CURRENT_BUS_COOKIE}=; Max-Age=0; Path=/; SameSite=Lax${location.protocol === "https:" ? "; Secure" : ""}`;
@@ -75,6 +90,12 @@ function readCurrentBusCookie(): SavedCurrentBus | null {
       || typeof saved.expiresAt !== "number"
       || !Number.isFinite(saved.expiresAt)
       || saved.expiresAt <= Date.now()) {
+      clearCurrentBusCookie();
+      return null;
+    }
+    // A selected timetable is only a draft. Restore automatically only after
+    // this device has successfully published a live location report.
+    if (saved.resumeSharing !== true) {
       clearCurrentBusCookie();
       return null;
     }
@@ -97,7 +118,9 @@ function saveCurrentBusCookie(direction: Direction, departureTime: string, reinf
   const [hours, minutes] = departureTime.split(":").map(Number);
   const todayDeparture = new Date();
   todayDeparture.setHours(hours, minutes, 0, 0);
-  const expiresAt = todayDeparture.getTime() + (timetable.stopOffsets.at(-1) ?? 75) * 60_000;
+  // Keep the cookie beyond the timetable arrival. A delayed vehicle may still
+  // be on the route, which is decided from its last shared position on return.
+  const expiresAt = todayDeparture.getTime() + (timetable.stopOffsets.at(-1) ?? 75) * 60_000 + SAVED_BUS_COOKIE_GRACE_MS;
   const maxAge = Math.floor((expiresAt - Date.now()) / 1_000);
   if (maxAge <= 0) {
     clearCurrentBusCookie();
@@ -106,6 +129,23 @@ function saveCurrentBusCookie(direction: Direction, departureTime: string, reinf
   const saved = { direction, departureTime, expiresAt, reinforcement, resumeSharing };
   document.cookie = `${CURRENT_BUS_COOKIE}=${encodeURIComponent(JSON.stringify(saved))}; Max-Age=${maxAge}; Path=/; SameSite=Lax${location.protocol === "https:" ? "; Secure" : ""}`;
   return saved;
+}
+
+function savedBusHasArrived(saved: SavedCurrentBus, reports: BusReport[], now: Date) {
+  const timetable = timetables[saved.direction];
+  const [hours, minutes] = saved.departureTime.split(":").map(Number);
+  const departure = new Date(now);
+  departure.setHours(hours, minutes, 0, 0);
+  const scheduledArrival = departure.getTime() + (timetable.stopOffsets.at(-1) ?? 75) * 60_000;
+  const report = reports
+    .filter((item) => item.direction === saved.direction && item.departureTime === saved.departureTime)
+    .sort((a, b) => a.ageSeconds - b.ageSeconds)[0];
+  if (report) {
+    const ageSeconds = report.ageSeconds + Math.max(0, (now.getTime() - (report.receivedAt ?? now.getTime())) / 1000);
+    const remainingMinutes = estimateMinutesUntilArrival(saved.direction, { ...report, ageSeconds });
+    if (remainingMinutes !== null) return remainingMinutes <= 0;
+  }
+  return now.getTime() >= scheduledArrival;
 }
 
 function rememberPendingDelete(session: ShareSession) {
@@ -142,7 +182,13 @@ export default function App() {
   const [savedCurrentBus, setSavedCurrentBus] = useState<SavedCurrentBus | null>(() => readCurrentBusCookie());
   const [direction, setDirection] = useState<Direction>(() => savedCurrentBus?.direction ?? "to-tarragona");
   const [reports, setReports] = useState<BusReport[]>([]);
+  const [delayReports, setDelayReports] = useState<DelayReport[]>([]);
+  const [delayMinutes, setDelayMinutes] = useState<number | null>(10);
+  const [delayOpen, setDelayOpen] = useState(false);
+  const [delaySubmitting, setDelaySubmitting] = useState(false);
+  const [delayNotice, setDelayNotice] = useState("");
   const [reportsLoaded, setReportsLoaded] = useState(false);
+  const [reportsFetchSucceeded, setReportsFetchSucceeded] = useState(false);
   const [shareState, setShareState] = useState<"idle" | "requesting" | "sharing">("idle");
   const [myReportId, setMyReportId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft>(() => savedCurrentBus
@@ -159,7 +205,7 @@ export default function App() {
   const [trackedMapBusId, setTrackedMapBusId] = useState<string | null>(null);
   const [installPrompt, setInstallPrompt] = useState<InstallPrompt | null>(null);
   const [theme, setTheme] = useState<Theme>(currentTheme);
-  const [page, setPage] = useState<Page>(() => savedCurrentBus ? MAP_PAGE : DEFAULT_PAGE);
+  const [page, setPage] = useState<Page>(() => savedCurrentBus?.resumeSharing ? MAP_PAGE : DEFAULT_PAGE);
   const pagerRef = useRef<HTMLElement>(null);
   const [now, setNow] = useState(() => new Date());
   const [showGhosts, setShowGhosts] = useState(loadShowGhosts);
@@ -193,6 +239,7 @@ export default function App() {
       const data = (await response.json()) as { reports: BusReport[] };
       const receivedAt = Date.now();
       setReports(data.reports.map((report) => ({ ...report, receivedAt })));
+      setReportsFetchSucceeded(true);
     } catch {
       if (!quiet) setNotice("No se pudo actualizar el mapa. Revisa la conexión e inténtalo de nuevo.");
     } finally {
@@ -201,11 +248,27 @@ export default function App() {
     }
   }, []);
 
+  const fetchDelayReports = useCallback(async () => {
+    try {
+      const query = new URLSearchParams({ direction: directionRef.current });
+      const response = await fetch(`/api/delays?${query}`, { headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error("No se pudieron cargar los avisos.");
+      const data = (await response.json()) as { reports: DelayReport[] };
+      setDelayReports(data.reports);
+    } catch { /* The live bus map remains available if delay reports cannot load. */ }
+  }, []);
+
   useEffect(() => {
     void fetchReports();
     const timer = window.setInterval(() => void fetchReports(true), 15_000);
     return () => window.clearInterval(timer);
   }, [direction, fetchReports]);
+
+  useEffect(() => {
+    void fetchDelayReports();
+    const timer = window.setInterval(() => void fetchDelayReports(), 30_000);
+    return () => window.clearInterval(timer);
+  }, [direction, fetchDelayReports]);
 
   useEffect(() => {
     const onInstallPrompt = (event: Event) => {
@@ -261,7 +324,10 @@ export default function App() {
   };
 
   function rememberCurrentBus(departureTime: string, reinforcement = draftRef.current.reinforcement) {
-    setSavedCurrentBus(saveCurrentBusCookie(directionRef.current, departureTime, reinforcement, savedCurrentBus?.resumeSharing ?? false));
+    const sameActiveBus = savedCurrentBus?.resumeSharing === true
+      && savedCurrentBus.direction === directionRef.current
+      && savedCurrentBus.departureTime === departureTime;
+    setSavedCurrentBus(saveCurrentBusCookie(directionRef.current, departureTime, reinforcement, sameActiveBus));
   }
 
   function setCurrentBusResumeSharing(resumeSharing: boolean) {
@@ -334,7 +400,8 @@ export default function App() {
   );
 
   useEffect(() => {
-    if (!savedCurrentBus || !reportsLoaded) return;
+    if (!savedCurrentBus?.resumeSharing || !reportsLoaded) return;
+    if (reportsFetchSucceeded && savedBusHasArrived(savedCurrentBus, reports, now)) return;
     const key = `${savedCurrentBus.direction}:${savedCurrentBus.departureTime}:${savedCurrentBus.expiresAt}`;
     if (restoredCurrentBusRef.current === key) return;
     restoredCurrentBusRef.current = key;
@@ -349,10 +416,13 @@ export default function App() {
       autoShareAttemptedRef.current = key;
       startSharing();
     }
-  }, [savedCurrentBus, reportsLoaded, activeReports, ghosts]);
+  }, [savedCurrentBus, reportsLoaded, reportsFetchSucceeded, reports, now, activeReports, ghosts]);
 
   useEffect(() => {
-    if (!savedCurrentBus || now.getTime() < savedCurrentBus.expiresAt) return;
+    if (!savedCurrentBus?.resumeSharing) return;
+    const hardExpired = now.getTime() >= savedCurrentBus.expiresAt;
+    const arrived = reportsFetchSucceeded && savedBusHasArrived(savedCurrentBus, reports, now);
+    if (!hardExpired && !arrived) return;
     clearCurrentBusCookie();
     setSavedCurrentBus(null);
     restoredCurrentBusRef.current = null;
@@ -361,9 +431,11 @@ export default function App() {
       : current);
     setTrackedMapBusId(null);
     setMapExpanded(false);
-    setNotice("El trayecto guardado ha llegado a su hora prevista y se ha cancelado.");
+    setNotice(hardExpired && !arrived
+      ? "El trayecto guardado ha caducado y se ha cancelado."
+      : "El bus guardado ya ha llegado, según el horario o la estimación de su última posición compartida.");
     if (sessionRef.current) void stopSharing(true);
-  }, [savedCurrentBus, now]);
+  }, [savedCurrentBus, reports, reportsFetchSucceeded, now]);
 
   function toggleGhosts() {
     const next = !showGhosts;
@@ -381,6 +453,44 @@ export default function App() {
   const trackedGhost = ghosts.find((ghost) => ghost.id === trackedMapBusId) ?? null;
   const trackedMapReport = trackedGhost ? null : (activeReports.find((report) => report.id === trackedMapBusId) ?? activeReports[0] ?? null);
   const currentDirection = timetables[direction];
+  const delaySummaries = useMemo(() => {
+    const groups = new Map<string, DelayReport[]>();
+    const cutoff = Date.now() - 120 * 60_000;
+    for (const report of delayReports) {
+      const created = Date.parse(report.createdAt);
+      if (report.direction !== direction || !Number.isFinite(created) || created < cutoff) continue;
+      const key = `${report.departureTime}:${report.stage}`;
+      groups.set(key, [...(groups.get(key) ?? []), report]);
+    }
+    return [...groups.values()].map((items): DelaySummary => {
+      const sorted = items.map((item) => item.delayMinutes).filter((minutes): minutes is number => minutes !== null).sort((a, b) => a - b);
+      return { departureTime: items[0].departureTime, stage: items[0].stage, delayMinutes: sorted.length ? sorted[Math.floor(sorted.length / 2)] : null, count: items.length, createdAt: items.map((item) => item.createdAt).sort().at(-1)! };
+    }).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)).slice(0, 6);
+  }, [delayReports, direction, now]);
+
+  async function submitDelayReport(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!currentDirection.departures.includes(draft.departureTime)) {
+      setDelayNotice("Primero elige una salida en Horarios para poder avisar del retraso.");
+      return;
+    }
+    setDelaySubmitting(true);
+    setDelayNotice("");
+    try {
+      const response = await fetch("/api/delays", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ direction, departureTime: draft.departureTime, delayMinutes, stage: shareState === "sharing" ? "in-route" : "not-arrived" }),
+      });
+      if (!response.ok) throw await responseError(response);
+      const data = (await response.json()) as { report: DelayReport };
+      setDelayReports((current) => [data.report, ...current.filter((item) => item.id !== data.report.id)]);
+      setDelayNotice("Aviso enviado. Gracias por ayudar a los demás viajeros.");
+      setDelayOpen(false);
+    } catch (error) {
+      setDelayNotice(error instanceof Error ? error.message : "No se pudo enviar el aviso. Revisa la conexión.");
+    } finally { setDelaySubmitting(false); }
+  }
   const selectedStopTimes = currentDirection.departures.map((time) => shiftClock(time, currentDirection.stopOffsets[scheduleStopIndex] || 0));
   const stopArrivals = useMemo(() => currentDirection.stops.map((_, index) => ({
     theoretical: getNextTheoreticalArrival(currentDirection, index, now),
@@ -450,6 +560,7 @@ export default function App() {
         sessionRef.current = session;
         setMyReportId(session.id);
         setShareState("sharing");
+        setCurrentBusResumeSharing(true);
         setNotice("Ubicación compartida. Deja esta pantalla abierta mientras viajas.");
         lastSentAtRef.current = Date.now();
         lastSentPointRef.current = { lat, lng };
@@ -514,7 +625,6 @@ export default function App() {
       return;
     }
     if (watchRef.current !== null) return;
-    setCurrentBusResumeSharing(true);
     latestPositionRef.current = null;
     lastSentAtRef.current = 0;
     lastSentPointRef.current = null;
@@ -530,9 +640,8 @@ export default function App() {
         heartbeatRef.current = null;
         latestPositionRef.current = null;
         setShareState("idle");
-        if (error.code === error.PERMISSION_DENIED) setCurrentBusResumeSharing(false);
         const message = error.code === error.PERMISSION_DENIED
-          ? "Has bloqueado la ubicación. Actívala en los ajustes del navegador si quieres compartir el bus."
+          ? "No se pudo acceder a tu ubicación. Revisa el permiso del navegador y pulsa «Compartir este bus» para volver a intentarlo."
           : error.code === error.TIMEOUT
             ? "El GPS está tardando. Sal al exterior e inténtalo de nuevo."
             : "No se pudo obtener la ubicación. Comprueba los permisos y vuelve a intentarlo.";
@@ -648,6 +757,22 @@ export default function App() {
   );
 
   const legalKind = legalKindFromPath(window.location.pathname);
+  useEffect(() => {
+    const seo = legalKind ? LEGAL_SEO[legalKind] : PAGE_SEO[page === SCHEDULE_PAGE ? "schedule" : page === MAP_PAGE ? "map" : "stops"];
+    const canonicalPath = legalKind ? `/${legalKind}.html` : "/";
+    document.title = seo.title;
+    const update = (selector: string, value: string, attribute = "content") => {
+      const element = document.querySelector<HTMLMetaElement | HTMLLinkElement>(selector);
+      if (element) element.setAttribute(attribute, value);
+    };
+    update('meta[name="description"]', seo.description);
+    update('meta[property="og:title"]', seo.title);
+    update('meta[property="og:description"]', seo.description);
+    update('meta[name="twitter:title"]', seo.title);
+    update('meta[name="twitter:description"]', seo.description);
+    update('link[rel="canonical"]', `https://bus.nekokoneko.org${canonicalPath}`, "href");
+    update('meta[property="og:url"]', `https://bus.nekokoneko.org${canonicalPath}`);
+  }, [legalKind, page]);
   if (legalKind) return <div className="app-shell legal-shell">
     <header className="topbar">
       <a className="brand" href="/" aria-label="MapGarraf, inicio"><span className="brand-mark"><BusGarrafIcon size={40} /></span><span><strong>MapGarraf</strong><small>BUSGARRAF · COMUNIDAD</small></span></a>
@@ -676,7 +801,7 @@ export default function App() {
       <main id="inicio" className="pager" ref={pagerRef} onScroll={onPagerScroll}>
         <section className="page" id="page-schedule" aria-label="Horarios" inert={page !== SCHEDULE_PAGE}>
           <div className="main-content">
-            <div className="page-heading"><div className="eyebrow"><span className="eyebrow-dot" />LUNES A VIERNES · DÍAS LABORABLES</div><h2>Horarios</h2></div>
+            <div className="page-heading"><div className="eyebrow"><span className="eyebrow-dot" />LUNES A VIERNES · DÍAS LABORABLES</div>{page === SCHEDULE_PAGE ? <h1>Horarios del BusGarraf</h1> : <h2>Horarios del BusGarraf</h2>}</div>
             {directionCard}
             <section className="detail-panel">
               <div className="detail-title"><div><h3>{currentDirection.start} → {currentDirection.end}</h3></div><Clock3 size={19} /></div>
@@ -706,8 +831,8 @@ export default function App() {
         <div className="main-content">
         <section className="intro">
           <div className="eyebrow"><span className="eyebrow-dot" />TARRAGONA ↔ VILANOVA I LA GELTRÚ</div>
-          <h1>El bus, un poco<br /><span>más cerca.</span></h1>
-          <p>Consulta el mapa y las llegadas sin seleccionar una salida. Para compartir la ubicación de un bus, sí tendrás que indicar su hora de salida.</p>
+          {page === MAP_PAGE ? <h1>BusGarraf<br /><span>Tarragona ↔ Vilanova</span></h1> : <h2 className="intro-title">BusGarraf<br /><span>Tarragona ↔ Vilanova</span></h2>}
+          <p>Horarios, paradas y mapa comunitario de la ruta entre Tarragona y Vilanova i la Geltrú. Las posiciones y llegadas son compartidas o estimadas, no datos oficiales. Puedes explorar el mapa sin elegir una salida.</p>
         </section>
 
         {directionCard}
@@ -752,6 +877,31 @@ export default function App() {
               {shareState === "requesting" ? <><span className="button-spinner" /> Esperando GPS</> : <><Navigation size={17} fill="currentColor" /> Compartir este bus</>}
             </button>
           )}
+          <div className="delay-report-inline">
+            {!delayOpen ? <button type="button" className="delay-report-toggle" aria-expanded="false" disabled={!draft.departureTime || shareState === "requesting"} onClick={() => { setDelayOpen(true); setDelayNotice(""); }}>
+              <Clock3 size={16} /><span><strong>¿Va con retraso?</strong><small>{draft.departureTime ? `Salida ${draft.departureTime} · ${shareState === "sharing" ? "bus en ruta" : "aún no ha llegado a la primera parada"}` : "Elige una salida en Horarios"}</small></span><b>Reportar</b>
+            </button> : <>
+              <div className="delay-inline-heading"><Clock3 size={16} /><strong>Reportar retraso · salida {draft.departureTime}</strong></div>
+              <form className="delay-form" onSubmit={submitDelayReport}>
+                <label>Retraso aproximado
+                  <select value={delayMinutes ?? "indefinite"} onChange={(event) => setDelayMinutes(event.target.value === "indefinite" ? null : Number(event.target.value))}>
+                    {[5, 10, 15, 20, 30, 45, 60, 90, 120].map((minutes) => <option key={minutes} value={minutes}>≈ {minutes} min</option>)}
+                    <option value="indefinite">Indefinido · no se sabe</option>
+                  </select>
+                </label>
+                <div className="delay-form-actions"><button className="delay-submit" type="submit" disabled={delaySubmitting}>{delaySubmitting ? "Enviando…" : <><Send size={16} /> Enviar aviso</>}</button><button className="delay-cancel" type="button" onClick={() => setDelayOpen(false)}>Cancelar</button></div>
+              </form>
+              <p className="delay-disclaimer">Se marcará como {shareState === "sharing" ? "bus en ruta" : "bus aún no llegado a la primera parada"}. No comparte GPS.</p>
+            </>}
+            {delayNotice && <p className="delay-feedback" role="status">{delayNotice}</p>}
+            {delaySummaries.filter((item) => item.departureTime === draft.departureTime).length > 0 && <div className="delay-feed" aria-label="Avisos recientes de retraso para esta salida">
+              <strong className="delay-feed-title">Avisos recientes · últimas 2 h</strong>
+              {delaySummaries.filter((item) => item.departureTime === draft.departureTime).map((item) => <div className="delay-feed-item" key={`${item.departureTime}:${item.stage}`}>
+                <span><small>{item.stage === "not-arrived" ? "Aún no había llegado a la primera parada" : "Reportado en ruta"} · hace {Math.max(0, Math.floor((now.getTime() - Date.parse(item.createdAt)) / 60_000))} min</small></span>
+                <strong>{item.delayMinutes === null ? "Indefinido" : `≈ ${item.delayMinutes} min`}{item.count > 1 ? ` · ${item.count} avisos` : ""}</strong>
+              </div>)}
+            </div>}
+          </div>
           <details className="privacy-details">
             <summary>Privacidad y seguridad</summary>
             <p>Solo enviamos ubicación tras pulsar compartir y aceptar el permiso del navegador. El GPS exacto es público mientras se actualiza y durante un minuto desde la última lectura; después, deja de considerarse una posición real y se estima con el horario, con coordenadas redondeadas a unos 100 m, hasta la llegada prevista (máximo 105 min desde la última lectura). Si vuelves a abrir la web durante ese trayecto, intentará reanudar la ubicación si ya habías iniciado la compartición y el navegador conserva el permiso. La señal se borra del servidor en un máximo de 24 h; pulsar «Dejar de compartir» solicita su borrado inmediato y, si no hay conexión, se volverá a intentar al recuperarla mientras esta pestaña siga abierta. No se crea una cuenta ni guardamos un historial de trayectos. El mapa solicita imágenes de OpenStreetMap, pero no le enviamos tu GPS. Úsalo como pasajero, nunca mientras conduces.</p>
@@ -906,7 +1056,7 @@ export default function App() {
 
         <section className="page" id="page-stops" aria-label="Paradas" inert={page !== STOPS_PAGE}>
           <div className="main-content">
-            <div className="page-heading"><div className="eyebrow"><span className="eyebrow-dot" />RECORRIDO COMPLETO</div><h2>Paradas</h2></div>
+            <div className="page-heading"><div className="eyebrow"><span className="eyebrow-dot" />RECORRIDO COMPLETO</div>{page === STOPS_PAGE ? <h1>Paradas del BusGarraf</h1> : <h2>Paradas del BusGarraf</h2>}</div>
             {directionCard}
             <section className="detail-panel stops-panel">
               <div className="detail-title"><div><h3>16 paradas</h3></div><MapPin size={19} /></div>

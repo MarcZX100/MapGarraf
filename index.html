@@ -6,24 +6,25 @@
     <meta name="theme-color" content="#081426" />
     <meta name="color-scheme" content="light dark" />
     <meta name="application-name" content="MapGarraf" />
-    <meta name="description" content="Encuentra paradas y horarios de BusGarraf entre Tarragona y Vilanova. Consulta ubicaciones compartidas y llegadas estimadas, o comparte tu posición para ayudar a otros viajeros." />
+    <meta name="description" content="Consulta los horarios y las 16 paradas del BusGarraf entre Tarragona, El Vendrell, Calafell, Cubelles y Vilanova. Mira posiciones compartidas y llegadas estimadas por viajeros." />
     <meta name="robots" content="index, follow, max-image-preview:large" />
     <link rel="canonical" href="https://bus.nekokoneko.org/" />
+    <link rel="alternate" hreflang="es-ES" href="https://bus.nekokoneko.org/" />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="MapGarraf" />
     <meta property="og:locale" content="es_ES" />
     <meta property="og:url" content="https://bus.nekokoneko.org/" />
-    <meta property="og:title" content="BusGarraf Tarragona ↔ Vilanova | MapGarraf" />
-    <meta property="og:description" content="Encuentra paradas y horarios de BusGarraf entre Tarragona y Vilanova. Consulta ubicaciones compartidas y llegadas estimadas, o comparte tu posición para ayudar a otros viajeros." />
+    <meta property="og:title" content="Horarios y paradas BusGarraf Tarragona–Vilanova | MapGarraf" />
+    <meta property="og:description" content="Horarios y 16 paradas del BusGarraf entre Tarragona y Vilanova. Consulta posiciones compartidas y llegadas estimadas por viajeros." />
     <meta property="og:image" content="https://bus.nekokoneko.org/icon-512.png?v=2" />
     <meta property="og:image:secure_url" content="https://bus.nekokoneko.org/icon-512.png?v=2" />
     <meta property="og:image:type" content="image/png" />
     <meta property="og:image:width" content="512" />
     <meta property="og:image:height" content="512" />
     <meta property="og:image:alt" content="Icono de MapGarraf: un autobús en la ruta Tarragona–Vilanova" />
-    <meta name="twitter:card" content="summary" />
-    <meta name="twitter:title" content="BusGarraf Tarragona ↔ Vilanova | MapGarraf" />
-    <meta name="twitter:description" content="Consulta paradas y horarios, mira ubicaciones compartidas y llegadas estimadas, o comparte tu posición para ayudar a otros viajeros." />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Horarios y paradas BusGarraf Tarragona–Vilanova | MapGarraf" />
+    <meta name="twitter:description" content="Horarios y 16 paradas del BusGarraf entre Tarragona y Vilanova. Consulta posiciones compartidas y llegadas estimadas por viajeros." />
     <meta name="twitter:image" content="https://bus.nekokoneko.org/icon-512.png?v=2" />
     <meta name="twitter:image:alt" content="Icono de MapGarraf: un autobús en la ruta Tarragona–Vilanova" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -35,10 +36,39 @@
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="icon" href="/icon-192.png?v=2" type="image/png" sizes="192x192" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <title>BusGarraf Tarragona ↔ Vilanova | MapGarraf</title>
+    <title>Horarios y paradas BusGarraf Tarragona–Vilanova | MapGarraf</title>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "WebApplication",
+        "name": "MapGarraf",
+        "alternateName": "BusGarraf Tarragona–Vilanova",
+        "url": "https://bus.nekokoneko.org/",
+        "description": "Herramienta comunitaria independiente para consultar los horarios y las paradas del BusGarraf entre Tarragona y Vilanova i la Geltrú, y ver posiciones y llegadas estimadas compartidas por viajeros.",
+        "applicationCategory": "TravelApplication",
+        "operatingSystem": "Any",
+        "inLanguage": "es-ES",
+        "isAccessibleForFree": true,
+        "image": "https://bus.nekokoneko.org/icon-512.png?v=2",
+        "offers": { "@type": "Offer", "price": "0", "priceCurrency": "EUR" },
+        "featureList": [
+          "Horarios BusGarraf Tarragona–Vilanova",
+          "Consulta de 16 paradas del recorrido",
+          "Mapa comunitario de posiciones compartidas",
+          "Estimaciones orientativas de llegada y retraso"
+        ]
+      }
+    </script>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root"><noscript>
+      <main style="max-width:760px;margin:3rem auto;padding:0 1.25rem;font:16px/1.6 system-ui,sans-serif;color:#152d4e">
+        <h1>Horarios y paradas del BusGarraf entre Tarragona y Vilanova</h1>
+        <p>MapGarraf es una herramienta comunitaria independiente para viajeros del BusGarraf. Consulta el recorrido, los horarios publicados, las paradas y las posiciones compartidas por otros pasajeros.</p>
+        <p>El recorrido conecta Tarragona, Torredembarra, Roda de Berà, El Vendrell, Calafell, Cunit, Cubelles y Vilanova i la Geltrú. El mapa también muestra estimaciones orientativas basadas en el horario y en las últimas posiciones compartidas; no son datos oficiales del operador.</p>
+        <p>Activa JavaScript para consultar el mapa interactivo y compartir voluntariamente la posición del bus. <a href="/busgarraf-vilanova-tarragona.html">Horarios completos por parada del BusGarraf</a> · <a href="/privacy.html">Política de privacidad</a> · <a href="/terms.html">Condiciones de uso</a>.</p>
+      </main>
+    </noscript></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

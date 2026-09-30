@@ -1,3 +1,5 @@
+import timetableData from "../shared/timetables.json";
+
 export type Direction = "to-tarragona" | "to-vilanova";
 
 export type RouteStop = {
@@ -49,26 +51,7 @@ export type Timetable = {
 // Tarragona 08:15, 11:30, 17:15; Tarragona → Vilanova 09:30, 12:45, 18:30); they are
 // kept as a single trip because the PDF does not say whether they are two vehicles.
 // Consult the operator's live planner for service changes, seasonal schedules and holidays.
-export const timetables: Record<Direction, Timetable> = {
-  "to-tarragona": {
-    direction: "to-tarragona",
-    start: "Vilanova i la Geltrú",
-    end: "Tarragona",
-    departures: ["06:15", "06:45", "07:15", "08:15", "09:30", "10:30", "11:30", "12:00", "12:30", "13:00", "13:30", "14:00", "15:00", "16:00", "16:45", "17:15", "18:15", "19:15"],
-    stops: ["Plaça Eduard Maristany", "C/ Pare Garí", "C/ Aigua – C/ Bruc", "C/ Zamenhof", "Ibersol", "Cubelles Centre", "Tèrmica", "Cunit Centre", "Benzinera", "La Ponderosa", "Segur Centre", "Calafell Estació", "Calafell Poble", "Zona Universitària", "Hospital Joan XXIII", "Estació autobusos"],
-    stopOffsets: [0, 3, 6, 10, 11, 15, 17, 20, 22, 23, 25, 33, 35, 70, 71, 75],
-    arrivalAtOtherEnd: "20:30",
-  },
-  "to-vilanova": {
-    direction: "to-vilanova",
-    start: "Tarragona",
-    end: "Vilanova i la Geltrú",
-    departures: ["07:30", "08:00", "08:30", "09:30", "10:45", "11:45", "12:45", "13:15", "13:45", "14:15", "14:45", "15:15", "16:15", "17:15", "18:00", "18:30", "19:30", "20:30"],
-    stops: ["Estació autobusos", "Hospital Joan XXIII", "Zona Universitària", "Calafell Poble", "Calafell Estació", "Segur Centre", "La Ponderosa", "Benzinera", "Cunit Centre", "Tèrmica", "Cubelles Centre", "Ibersol", "C/ Zamenhof", "C/ Aigua – C/ Bruc", "Pobles d’Espanya", "Plaça Eduard Maristany"],
-    stopOffsets: [0, 2, 5, 35, 39, 45, 47, 48, 50, 53, 55, 59, 60, 64, 68, 75],
-    arrivalAtOtherEnd: "21:45",
-  },
-};
+export const timetables = timetableData as Record<Direction, Timetable>;
 
 export const directionLabel: Record<Direction, string> = {
   "to-tarragona": "Hacia Tarragona",
