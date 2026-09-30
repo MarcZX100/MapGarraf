@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownUp,
+  Bell,
   BusFront,
   Check,
   ChevronDown,
@@ -48,6 +49,7 @@ const LIVE_REPORT_SECONDS = 60;
 const ESTIMATED_REPORT_MATCH_DISTANCE_M = 2_500;
 const CURRENT_BUS_COOKIE = "mapgarraf-current-bus";
 const PENDING_DELETES_KEY = "mapgarraf-pending-report-deletes-v1";
+const SEEN_ANNOUNCEMENTS_KEY = "mapgarraf-seen-announcements-v1";
 const SAVED_BUS_COOKIE_GRACE_MS = 24 * 60 * 60_000;
 type PendingDelete = { id: string; token: string; expiresAt: number };
 type SavedCurrentBus = { direction: Direction; departureTime: string; expiresAt: number; reinforcement: boolean; resumeSharing: boolean };
@@ -55,6 +57,26 @@ type ApiError = Error & { status?: number };
 type InstallPrompt = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: "accepted" | "dismissed" }> };
 
 const initialDraft: Draft = { departureTime: "", occupancy: null, reinforcement: false };
+const ANNOUNCEMENTS = [{
+  id: "resume-shared-bus-2026-09-30",
+  date: "30 de septiembre de 2026",
+  dateTime: "2026-09-30",
+  title: "Tu bus compartido se recupera al volver",
+  body: "Si cierras o recargas MapGarraf mientras compartes un bus y el viaje sigue activo, al volver se abrirá directamente el mapa de ese mismo bus. La app también intentará reanudar el envío de tu ubicación si el navegador conserva el permiso. Puedes detenerlo cuando quieras con «Dejar de compartir».",
+}] as const;
+
+function seenAnnouncementIds(): string[] {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(SEEN_ANNOUNCEMENTS_KEY) || "[]");
+    return Array.isArray(value) ? value.filter((id): id is string => typeof id === "string") : [];
+  } catch { return []; }
+}
+
+function markAnnouncementSeen(id: string) {
+  const seen = seenAnnouncementIds();
+  if (seen.includes(id)) return;
+  try { localStorage.setItem(SEEN_ANNOUNCEMENTS_KEY, JSON.stringify([...seen, id])); } catch { /* The announcement remains available from its link. */ }
+}
 
 type Page = 0 | 1 | 2;
 const SCHEDULE_PAGE = 0, MAP_PAGE = 1, STOPS_PAGE = 2, PAGE_COUNT = 3;
@@ -204,6 +226,7 @@ export default function App() {
   const [delayNotice, setDelayNotice] = useState("");
   const [reportsLoaded, setReportsLoaded] = useState(false);
   const [reportsFetchSucceeded, setReportsFetchSucceeded] = useState(false);
+  const [announcementOpen, setAnnouncementOpen] = useState(false);
   const [shareState, setShareState] = useState<"idle" | "requesting" | "sharing">("idle");
   const [myReportId, setMyReportId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft>(() => savedCurrentBus
@@ -298,6 +321,22 @@ export default function App() {
     window.addEventListener("beforeinstallprompt", onInstallPrompt);
     return () => window.removeEventListener("beforeinstallprompt", onInstallPrompt);
   }, []);
+
+  useEffect(() => {
+    const latest = ANNOUNCEMENTS[0];
+    if (seenAnnouncementIds().includes(latest.id)) return;
+    markAnnouncementSeen(latest.id);
+    setAnnouncementOpen(true);
+  }, []);
+
+  useEffect(() => {
+    if (!announcementOpen) return;
+    const dismissOnEscape = (event: KeyboardEvent) => {
+      if (event.key === "Escape") setAnnouncementOpen(false);
+    };
+    window.addEventListener("keydown", dismissOnEscape);
+    return () => window.removeEventListener("keydown", dismissOnEscape);
+  }, [announcementOpen]);
 
   useEffect(() => {
     const query = window.matchMedia("(prefers-color-scheme: dark)");
@@ -841,7 +880,8 @@ export default function App() {
         <a className="icon-button legal-home-button" href="/" aria-label="Volver al mapa"><MapPinned size={18} /></a>
       </div>
     </header>
-    <LegalPage kind={legalKind} />
+    <LegalPage kind={legalKind} onShowAnnouncements={() => setAnnouncementOpen(true)} />
+    {announcementOpen && <AnnouncementDialog onClose={() => setAnnouncementOpen(false)} />}
   </div>;
 
   return (
@@ -1108,6 +1148,7 @@ export default function App() {
         <footer className="page-footer">
           <span>Hecho para viajar mejor por el Garraf.</span>
           <nav aria-label="Información legal" className="page-footer-links">
+            <button type="button" className="announcement-link" aria-haspopup="dialog" onClick={() => setAnnouncementOpen(true)}><Bell size={12} />Novedades</button>
             <a href="/terms.html">Condiciones</a>
             <a href="/privacy.html">Privacidad</a>
             <a href="/cookies.html">Cookies</a>
@@ -1182,6 +1223,8 @@ export default function App() {
         ))}
       </nav>
 
+      {announcementOpen && <AnnouncementDialog onClose={() => setAnnouncementOpen(false)} />}
+
       {showInstallHelp && <div className="dialog-backdrop" role="presentation" onClick={() => setShowInstallHelp(false)}>
         <section className="install-dialog" role="dialog" aria-modal="true" aria-labelledby="install-title" onClick={(event) => event.stopPropagation()}>
           <button className="dialog-close" onClick={() => setShowInstallHelp(false)} aria-label="Cerrar"><X size={18} /></button>
@@ -1197,6 +1240,20 @@ export default function App() {
       </div>}
     </div>
   );
+}
+
+function AnnouncementDialog({ onClose }: { onClose: () => void }) {
+  const announcement = ANNOUNCEMENTS[0];
+  return <div className="dialog-backdrop" role="presentation" onClick={onClose}>
+    <section className="install-dialog announcement-dialog" role="dialog" aria-modal="true" aria-labelledby="announcement-title" aria-describedby="announcement-body" onClick={(event) => event.stopPropagation()}>
+      <button className="dialog-close" onClick={onClose} aria-label="Cerrar anuncio"><X size={18} /></button>
+      <span className="install-dialog-icon"><Bell size={22} /></span>
+      <p className="announcement-kicker">NOVEDADES · <time dateTime={announcement.dateTime}>{announcement.date}</time></p>
+      <h2 id="announcement-title">{announcement.title}</h2>
+      <p id="announcement-body">{announcement.body}</p>
+      <button className="share-button dialog-action" onClick={onClose}>Entendido</button>
+    </section>
+  </div>;
 }
 
 function Choice({ selected, onClick, children }: { selected: boolean; onClick: () => void; children: React.ReactNode }) {

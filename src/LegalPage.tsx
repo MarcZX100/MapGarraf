@@ -15,7 +15,7 @@ export function legalKindFromPath(path: string): LegalKind | null {
   return null;
 }
 
-export default function LegalPage({ kind }: { kind: LegalKind }) {
+export default function LegalPage({ kind, onShowAnnouncements }: { kind: LegalKind; onShowAnnouncements: () => void }) {
   return <main className="legal-content">
     <div className="page-heading"><div className="eyebrow"><span className="eyebrow-dot" />MAPGARRAF · INFORMACIÓN</div><h1>{titles[kind]}</h1><p className="legal-updated">Última actualización: 28 de septiembre de 2026</p></div>
     {kind === "terms" && <>
@@ -44,6 +44,6 @@ export default function LegalPage({ kind }: { kind: LegalKind }) {
       <h2>Cambiar tu elección</h2><p>Usa <button className="legal-inline-button" type="button" data-cookie-settings>Configurar cookies</button> para aceptar o rechazar la analítica. Retirar el consentimiento la desactiva en este navegador y elimina las cookies analíticas accesibles para el sitio. La elección se recuerda durante 180 días.</p>
       <h2>Responsable</h2><p>El responsable es Marc Jaen Garrido, como particular. Contacto: <a href="mailto:nekokonekowebsite@gmail.com">nekokonekowebsite@gmail.com</a>. Consulta también la <a href="/privacy.html">Política de privacidad</a>.</p>
     </>}
-    <nav className="legal-nav" aria-label="Información legal"><a href="/">Volver al mapa</a><a href="/terms.html">Condiciones</a><a href="/privacy.html">Privacidad</a><a href="/cookies.html">Cookies</a><button type="button" data-cookie-settings>Configurar cookies</button><a href="https://busgarraf.cat/es/" target="_blank" rel="noreferrer">Web oficial <ExternalLink size={13} /></a></nav>
+    <nav className="legal-nav" aria-label="Información legal"><a href="/">Volver al mapa</a><a href="/terms.html">Condiciones</a><a href="/privacy.html">Privacidad</a><a href="/cookies.html">Cookies</a><button type="button" onClick={onShowAnnouncements}>Novedades</button><button type="button" data-cookie-settings>Configurar cookies</button><a href="https://busgarraf.cat/es/" target="_blank" rel="noreferrer">Web oficial <ExternalLink size={13} /></a></nav>
   </main>;
 }
