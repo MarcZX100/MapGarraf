@@ -5,6 +5,7 @@ import { type Direction, type RouteStop, type Timetable } from "./data";
 import { roadShapeByDirection } from "./routeShapes";
 import { getReportStatus } from "./reportStatus";
 import { getNextSharedArrival, getNextTheoreticalArrival, getTheoreticalPassageTimes } from "./stopArrivals";
+import { type Language, translate } from "./i18n";
 
 export type BusReport = {
   id: string;
@@ -25,12 +26,15 @@ export type BusReport = {
   receivedAt?: number;
   /** The position is a timetable-based estimate from an older real reading, not a live GPS fix. */
   estimated?: boolean;
+  /** Distance of the most recent shared GPS fix from the route, when it exceeds the GPS tolerance. */
+  deviationMeters?: number | null;
   previousStop?: string;
   nextStop?: string;
   minutesToNextStop?: number | null;
 };
 
 type Props = {
+  language: Language;
   direction: Direction;
   stops: RouteStop[];
   timetable: Timetable;
@@ -42,7 +46,7 @@ type Props = {
   onUserMove: () => void;
 };
 
-export default function RouteMap({ direction, stops, timetable, reports, ghosts, expanded, followBus, followReportId, onUserMove }: Props) {
+export default function RouteMap({ language, direction, stops, timetable, reports, ghosts, expanded, followBus, followReportId, onUserMove }: Props) {
   const elementRef = useRef<HTMLDivElement>(null);
   const mapRef = useRef<L.Map | null>(null);
   const routeLayersRef = useRef<L.LayerGroup | null>(null);
@@ -66,7 +70,7 @@ export default function RouteMap({ direction, stops, timetable, reports, ghosts,
     const map = L.map(elementRef.current, { zoomControl: false, scrollWheelZoom: true, touchZoom: true, attributionControl: true, preferCanvas: true });
     L.tileLayer(import.meta.env.VITE_TILE_URL || "https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
       maxZoom: 19,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · Rutas: <a href="https://project-osrm.org/">OSRM</a>',
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> · <a href="https://project-osrm.org/">OSRM</a>',
     }).addTo(map);
     L.control.zoom({ position: "bottomright" }).addTo(map);
     mapRef.current = map;
@@ -95,6 +99,21 @@ export default function RouteMap({ direction, stops, timetable, reports, ghosts,
   }, []);
 
   useEffect(() => {
+    const container = mapRef.current?.getContainer();
+    if (!container) return;
+    const zoomIn = container.querySelector<HTMLAnchorElement>(".leaflet-control-zoom-in");
+    const zoomOut = container.querySelector<HTMLAnchorElement>(".leaflet-control-zoom-out");
+    if (zoomIn) {
+      zoomIn.title = translate(language, "Acercar mapa");
+      zoomIn.setAttribute("aria-label", translate(language, "Acercar mapa"));
+    }
+    if (zoomOut) {
+      zoomOut.title = translate(language, "Alejar mapa");
+      zoomOut.setAttribute("aria-label", translate(language, "Alejar mapa"));
+    }
+  }, [language]);
+
+  useEffect(() => {
     const map = mapRef.current;
     const layers = routeLayersRef.current;
     if (!map || !layers) return;
@@ -113,7 +132,7 @@ export default function RouteMap({ direction, stops, timetable, reports, ghosts,
         fillOpacity: 0.001,
       }).bindPopup(() => {
         const popupData = stopPopupDataRef.current;
-        return stopPopupHtml(index, stop, popupData.timetable, popupData.reports, new Date());
+        return stopPopupHtml(index, stop, popupData.timetable, popupData.reports, new Date(), language);
       }, { maxWidth: 320, minWidth: 240, offset: L.point(0, -14) }).addTo(layers);
       L.circleMarker([point.lat, point.lng], {
         radius: 5,
@@ -128,7 +147,7 @@ export default function RouteMap({ direction, stops, timetable, reports, ghosts,
     programmaticMoveRef.current = true;
     map.fitBounds(L.latLngBounds(roadPoints).pad(0.12), { animate: false, maxZoom: 12 });
     programmaticMoveRef.current = false;
-  }, [direction, stops]);
+  }, [direction, stops, language]);
 
   useEffect(() => {
     const layers = reportLayersRef.current;
@@ -145,8 +164,8 @@ export default function RouteMap({ direction, stops, timetable, reports, ghosts,
     }
     for (const report of reports) {
       const point = L.latLng(report.latitude, report.longitude);
-      const icon = reportIcon(report);
-      const popup = reportPopupHtml(report);
+      const icon = reportIcon(report, language);
+      const popup = reportPopupHtml(report, language);
       const showAccuracy = !report.estimated && report.accuracy !== null && report.accuracy > 0 && report.accuracy < 600;
       const existing = markers.get(report.id);
       if (existing) {
@@ -162,7 +181,7 @@ export default function RouteMap({ direction, stops, timetable, reports, ghosts,
       const marker = L.marker(point, { icon, zIndexOffset: 500 }).bindPopup(popup).addTo(layers);
       markers.set(report.id, { marker, circle });
     }
-  }, [reports]);
+  }, [reports, language]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -200,13 +219,13 @@ export default function RouteMap({ direction, stops, timetable, reports, ghosts,
       const existing = markers.get(ghost.id);
       if (existing) {
         existing.setLatLng(point);
-        existing.setPopupContent(ghostPopupHtml(ghost));
+        existing.setIcon(ghostIcon(ghost, language)).setPopupContent(ghostPopupHtml(ghost, language));
         continue;
       }
-      const marker = L.marker(point, { icon: ghostIcon(ghost), zIndexOffset: 100 }).bindPopup(ghostPopupHtml(ghost)).addTo(layers);
+      const marker = L.marker(point, { icon: ghostIcon(ghost, language), zIndexOffset: 100 }).bindPopup(ghostPopupHtml(ghost, language)).addTo(layers);
       markers.set(ghost.id, marker);
     }
-  }, [ghosts]);
+  }, [ghosts, language]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -223,19 +242,21 @@ export default function RouteMap({ direction, stops, timetable, reports, ghosts,
     }
   }, [expanded, followBus, followReportId, reports, ghosts]);
 
-  return <div className="route-map" ref={elementRef} role="img" aria-label="Mapa interactivo de la ruta y las posiciones compartidas entre Tarragona y Vilanova i la Geltrú" />;
+  return <div className="route-map" ref={elementRef} role="img" aria-label={translate(language, "Mapa interactivo de la ruta y las posiciones compartidas entre Tarragona y Vilanova i la Geltrú")} />;
 }
 
-function reportIcon(report: BusReport) {
+function reportIcon(report: BusReport, language: Language) {
   const baseTitle = "Bus compartido";
   const status = getReportStatus(report.delayMinutes, report.delayBasis);
-  const markerLabel = escapeHtml(report.estimated ? `Estimado · ${status.markerLabel}` : status.markerLabel);
-  const markerDescription = escapeHtml(`${report.reinforcement ? "Bus de refuerzo" : baseTitle}${report.estimated ? " (posición estimada)" : ""}: ${status.label}`);
+  const deviated = report.deviationMeters !== null && report.deviationMeters !== undefined;
+  const deviationLabel = deviated ? `${translate(language, report.estimated ? "Desvío en última señal" : "Posible desvío")}` : null;
+  const markerLabel = escapeHtml(deviationLabel ?? (report.estimated ? `${translate(language, "ESTIMADO")} · ${translate(language, status.markerLabel)}` : translate(language, status.markerLabel)));
+  const markerDescription = escapeHtml(`${translate(language, report.reinforcement ? "Bus de refuerzo" : baseTitle)}${report.estimated ? ` (${translate(language, "POSICIÓN ESTIMADA").toLowerCase()})` : ""}${deviated ? ` · ${deviationLabel} · ${Math.round(report.deviationMeters!)} m ${translate(language, "del recorrido")}` : `: ${translate(language, status.label)}`}`);
   return L.divIcon({
     className: "bus-map-icon-wrap",
-    html: `<span class="bus-map-marker${report.estimated ? " is-estimated" : ""}${report.reinforcement ? " is-reinforcement" : ""}" role="img" aria-label="${markerDescription}" title="${markerDescription}">
-      <span class="bus-map-status bus-map-status--${status.kind}${report.reinforcement ? " bus-map-status--reinforcement" : ""}">${report.reinforcement ? "✚ Refuerzo" : markerLabel}</span>
-      <span class="bus-map-pin bus-map-pin--${status.kind}" aria-hidden="true">
+    html: `<span class="bus-map-marker${report.estimated ? " is-estimated" : ""}${report.reinforcement ? " is-reinforcement" : ""}${deviated ? " is-deviated" : ""}" role="img" aria-label="${markerDescription}" title="${markerDescription}">
+        <span class="bus-map-status bus-map-status--${status.kind}${report.reinforcement && !deviated ? " bus-map-status--reinforcement" : ""}${deviated ? " bus-map-status--deviated" : ""}">${deviated ? markerLabel : report.reinforcement ? `✚ ${translate(language, "Refuerzo")}` : markerLabel}</span>
+      <span class="bus-map-pin bus-map-pin--${status.kind}${deviated ? " bus-map-pin--deviated" : ""}" aria-hidden="true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 16V8.5A2.5 2.5 0 0 1 7.5 6h9A2.5 2.5 0 0 1 19 8.5V16"/><path d="M5 11h14M8 16v2m8-2v2M7.5 18h9A2.5 2.5 0 0 0 19 15.5V13H5v2.5A2.5 2.5 0 0 0 7.5 18Z"/><path d="M8 8.5h.01M16 8.5h.01"/></svg>
       </span>
     </span>`,
@@ -245,32 +266,35 @@ function reportIcon(report: BusReport) {
   });
 }
 
-function reportPopupHtml(report: BusReport) {
-  const baseTitle = "Bus compartido";
-  const title = report.supportCount && report.supportCount > 1 ? `${baseTitle} · ${report.supportCount} avisos` : baseTitle;
+function reportPopupHtml(report: BusReport, language: Language) {
+  const baseTitle = translate(language, "Bus compartido");
+  const title = report.supportCount && report.supportCount > 1 ? `${baseTitle} · ${report.supportCount} ${translate(language, "avisos")}` : baseTitle;
   const status = getReportStatus(report.delayMinutes, report.delayBasis);
   const minutes = Math.floor(report.ageSeconds / 60);
-  const departure = report.departureTime ? ` · salida ${escapeHtml(report.departureTime)}` : "";
-  const nextStop = report.nextStop ? `<br>Próxima parada: ${escapeHtml(report.nextStop)}${report.minutesToNextStop !== null && report.minutesToNextStop !== undefined ? ` · ~${report.minutesToNextStop} min` : ""}.` : "";
+  const departure = report.departureTime ? ` · ${translate(language, "Salida").toLowerCase()} ${escapeHtml(report.departureTime)}` : "";
+  const nextStop = report.nextStop ? `<br>${translate(language, "Próxima parada:")} ${escapeHtml(report.nextStop)}${report.minutesToNextStop !== null && report.minutesToNextStop !== undefined ? ` · ~${report.minutesToNextStop} min` : ""}.` : "";
+  const deviation = report.deviationMeters !== null && report.deviationMeters !== undefined
+    ? `<br><span class="popup-deviation">⚠ ${translate(language, report.estimated ? "Desvío en última señal" : "Posible desvío")} · ~${Math.round(report.deviationMeters)} m ${translate(language, "del recorrido")}</span>`
+    : "";
   if (report.estimated) {
-    const between = report.previousStop && report.nextStop ? `<br>Ahora estaría entre ${escapeHtml(report.previousStop)} y ${escapeHtml(report.nextStop)}.` : "";
-    return `<strong>${title} · posición estimada</strong><br>${report.reinforcement ? `<span class="reinforcement-popup">✚ REFUERZO</span><br>` : ""}<span class="popup-status popup-status--${status.kind}">${escapeHtml(status.label)}</span>${between}${nextStop}<br>Última posición real hace ${minutes} min${departure}.<br><small>Posición y retraso estimados con horario publicado; no son datos oficiales.</small>`;
+    const between = report.previousStop && report.nextStop ? `<br>${translate(language, "Según el horario, ahora estaría entre")} ${escapeHtml(report.previousStop)} ${translate(language, "y")} ${escapeHtml(report.nextStop)}.` : "";
+    return `<strong>${title} · ${translate(language, "POSICIÓN ESTIMADA").toLowerCase()}</strong><br>${report.reinforcement ? `<span class="reinforcement-popup">✚ ${translate(language, "Bus de refuerzo").toUpperCase()}</span><br>` : ""}<span class="popup-status popup-status--${status.kind}">${escapeHtml(translate(language, status.label))}</span>${deviation}${between}${nextStop}<br>${translate(language, "Última posición real hace")} ${minutes} min${departure}.<br><small>${translate(language, "Posición y retraso estimados con horario publicado; no son datos oficiales.")}</small>`;
   }
-  const age = report.ageSeconds < 60 ? "ahora" : `hace ${minutes} min`;
-  return `<strong>${title}</strong><br>${report.reinforcement ? `<span class="reinforcement-popup">✚ REFUERZO</span><br>` : ""}<span class="popup-status popup-status--${status.kind}">${escapeHtml(status.label)}</span>${nextStop}<br>${age}${departure}<br><small>Retraso estimado comparando GPS y horario publicado; no es oficial.</small>`;
+  const age = report.ageSeconds < 60 ? translate(language, "ahora") : `${translate(language, "hace")} ${minutes} min`;
+  return `<strong>${title}</strong><br>${report.reinforcement ? `<span class="reinforcement-popup">✚ ${translate(language, "Bus de refuerzo").toUpperCase()}</span><br>` : ""}<span class="popup-status popup-status--${status.kind}">${escapeHtml(translate(language, status.label))}</span>${deviation}${nextStop}<br>${age}${departure}<br><small>${translate(language, "Retraso estimado comparando GPS y horario publicado; no es oficial.")}</small>`;
 }
 
 function accuracyCircle(point: L.LatLng, radius: number) {
   return L.circle(point, { radius, color: "#71817e", weight: 1, fillColor: "#71817e", fillOpacity: 0.07 });
 }
 
-function ghostIcon(ghost: GhostBus) {
+function ghostIcon(ghost: GhostBus, language: Language) {
   const waiting = ghost.departsInMinutes !== null;
-  const description = escapeHtml(`Bus fantasma sin verificar, ${waiting ? `saldría a las ${ghost.departureTime}` : `salida ${ghost.departureTime}`}`);
+  const description = escapeHtml(`${translate(language, "Bus fantasma")} ${translate(language, "sin verificar")}, ${waiting ? `${translate(language, "saldría a las")} ${ghost.departureTime}` : `${translate(language, "Salida").toLowerCase()} ${ghost.departureTime}`}`);
   return L.divIcon({
     className: "bus-map-icon-wrap",
     html: `<span class="bus-map-marker" role="img" aria-label="${description}" title="${description}">
-      <span class="bus-map-status bus-map-status--ghost">${waiting ? `Sin verificar · ${escapeHtml(ghost.departureTime)}` : "Sin verificar"}</span>
+      <span class="bus-map-status bus-map-status--ghost">${waiting ? `${translate(language, "Sin verificar")} · ${escapeHtml(ghost.departureTime)}` : translate(language, "Sin verificar")}</span>
       <span class="bus-map-pin bus-map-pin--ghost" aria-hidden="true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 10h.01"/><path d="M15 10h.01"/><path d="M12 2a8 8 0 0 0-8 8v12l3-3 2.5 2.5L12 19l2.5 2.5L17 19l3 3V10a8 8 0 0 0-8-8z"/></svg>
       </span>
@@ -281,31 +305,31 @@ function ghostIcon(ghost: GhostBus) {
   });
 }
 
-function ghostPopupHtml(ghost: GhostBus) {
+function ghostPopupHtml(ghost: GhostBus, language: Language) {
   const where = ghost.departsInMinutes !== null
-    ? `Según el horario, saldría de ${escapeHtml(ghost.previousStop)} a las ${escapeHtml(ghost.departureTime)} (en ${ghost.departsInMinutes} min).`
-    : `Según el horario, ahora estaría entre ${escapeHtml(ghost.previousStop)} y ${escapeHtml(ghost.nextStop)}.`;
-  return `<strong>Bus fantasma · salida ${escapeHtml(ghost.departureTime)}</strong><br><span class="popup-status popup-status--ghost">SIN VERIFICAR</span><br>${where}<br><small>Es solo una estimación del horario: nadie ha confirmado que este bus exista ni dónde está.</small>`;
+    ? `${translate(language, "Según el horario, saldría de")} ${escapeHtml(ghost.previousStop)} ${translate(language, "a las")} ${escapeHtml(ghost.departureTime)} (${translate(language, "en")} ${ghost.departsInMinutes} min).`
+    : `${translate(language, "Según el horario, ahora estaría entre")} ${escapeHtml(ghost.previousStop)} ${translate(language, "y")} ${escapeHtml(ghost.nextStop)}.`;
+  return `<strong>${translate(language, "Bus fantasma")} · ${translate(language, "Salida").toLowerCase()} ${escapeHtml(ghost.departureTime)}</strong><br><span class="popup-status popup-status--ghost">${translate(language, "SIN VERIFICAR")}</span><br>${where}<br><small>${translate(language, "Solo es una estimación: nadie ha confirmado que este bus circule ni dónde está. Puede no existir, ir con retraso o no haber salido.")}</small>`;
 }
 
-function stopPopupHtml(index: number, stop: RouteStop, timetable: Timetable, reports: BusReport[], now: Date) {
+function stopPopupHtml(index: number, stop: RouteStop, timetable: Timetable, reports: BusReport[], now: Date, language: Language) {
   const theoretical = getNextTheoreticalArrival(timetable, index, now);
   const shared = getNextSharedArrival(timetable, index, reports, now);
   const passageTimes = getTheoreticalPassageTimes(timetable, index);
   const theoreticalSummary = theoretical
-    ? `<strong>${escapeHtml(theoretical.time)}</strong> · ${theoretical.minutesUntil === 0 ? "ahora" : `en ~${theoretical.minutesUntil} min`}`
-    : "Sin pasos pendientes hoy.";
+    ? `<strong>${escapeHtml(theoretical.time)}</strong> · ${theoretical.minutesUntil === 0 ? translate(language, "ahora") : `${translate(language, "en ~")}${theoretical.minutesUntil} min`}`
+    : translate(language, "Sin pasos pendientes hoy.");
   const sharedSummary = shared
-    ? `<strong>${escapeHtml(shared.time)}</strong> · ${shared.minutesUntil === 0 ? "ahora" : `en ~${shared.minutesUntil} min`} · ${shared.estimated ? "posición proyectada" : "GPS compartido"}`
-    : "No hay una ubicación compartida con ETA para esta parada.";
+    ? `<strong>${escapeHtml(shared.time)}</strong> · ${shared.minutesUntil === 0 ? translate(language, "ahora") : `${translate(language, "en ~")}${shared.minutesUntil} min`} · ${translate(language, shared.estimated ? "posición proyectada" : "GPS compartido")}`
+    : translate(language, "No hay una ubicación compartida con ETA para esta parada.");
   const timesHtml = passageTimes.map((time) => `<span>${escapeHtml(time)}</span>`).join("");
 
   return `<div class="stop-popup">
     <strong class="stop-popup-title">${index + 1}. ${escapeHtml(stop.name)}</strong>
     <span class="stop-popup-town">${escapeHtml(stop.town)}</span>
-    <div class="stop-popup-section"><span class="stop-popup-label">Siguiente según horario</span><div>${theoreticalSummary}</div></div>
-    <div class="stop-popup-section"><span class="stop-popup-label">Siguiente según ubicación compartida</span><div>${sharedSummary}</div></div>
-    <div class="stop-popup-section"><span class="stop-popup-label">Pasos publicados · laborables</span><div class="stop-popup-times">${timesHtml || "Horario no disponible."}</div></div>
+    <div class="stop-popup-section"><span class="stop-popup-label">${translate(language, "Próximo paso por horario")}</span><div>${theoreticalSummary}</div></div>
+    <div class="stop-popup-section"><span class="stop-popup-label">${translate(language, "Llegada calculada")}</span><div>${sharedSummary}</div></div>
+    <div class="stop-popup-section"><span class="stop-popup-label">${translate(language, "Pasos publicados · laborables")}</span><div class="stop-popup-times">${timesHtml || translate(language, "Horario no disponible.")}</div></div>
   </div>`;
 }
 

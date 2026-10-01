@@ -4,6 +4,30 @@
   const consentLifetimeMs = 180 * 24 * 60 * 60 * 1000;
   const disableKey = `ga-disable-${measurementId}`;
   let analyticsInitialized = false;
+  const cookieCopy = {
+    es: {
+      title: "Tu privacidad importa",
+      body: "MapGarraf solo carga Google Analytics si aceptas las cookies analíticas. Nos ayuda a saber cómo se usa la web y mejorarla. El mapa y la ubicación compartida funcionan también si las rechazas.",
+      cookies: "Política de cookies", privacy: "Privacidad", reject: "Rechazar analíticas", accept: "Aceptar analíticas",
+    },
+    ca: {
+      title: "La teva privacitat ens importa",
+      body: "MapGarraf només carrega Google Analytics si acceptes les galetes d’analítica. Ens ajuda a entendre com s’utilitza el web i a millorar-lo. El mapa i la ubicació compartida també funcionen si les rebutges.",
+      cookies: "Política de galetes", privacy: "Privacitat", reject: "Rebutja l’analítica", accept: "Accepta l’analítica",
+    },
+    en: {
+      title: "Your privacy matters",
+      body: "MapGarraf only loads Google Analytics if you accept analytics cookies. This helps us understand how the site is used and improve it. The map and location sharing also work if you reject them.",
+      cookies: "Cookie policy", privacy: "Privacy", reject: "Reject analytics", accept: "Accept analytics",
+    },
+  };
+
+  function currentLanguage() {
+    try {
+      const selected = localStorage.getItem("mapgarraf-language-v1");
+      return selected === "ca" || selected === "en" ? selected : "es";
+    } catch { return "es"; }
+  }
 
   window[disableKey] = true;
   window.dataLayer = window.dataLayer || [];
@@ -95,17 +119,18 @@
     banner.setAttribute("role", "dialog");
     banner.setAttribute("aria-labelledby", "mapgarraf-cookie-title");
     banner.setAttribute("aria-describedby", "mapgarraf-cookie-description");
+    const copy = cookieCopy[currentLanguage()];
     banner.innerHTML = `
       <div class="cookie-consent__copy">
-        <strong id="mapgarraf-cookie-title">Tu privacidad importa</strong>
-        <p id="mapgarraf-cookie-description">MapGarraf solo carga Google Analytics si aceptas las cookies analíticas. Nos ayuda a saber cómo se usa la web y mejorarla. El mapa y la ubicación compartida funcionan también si las rechazas.</p>
-        <a href="/cookies.html">Política de cookies</a>
+        <strong id="mapgarraf-cookie-title">${copy.title}</strong>
+        <p id="mapgarraf-cookie-description">${copy.body}</p>
+        <a href="/cookies.html">${copy.cookies}</a>
         <span aria-hidden="true"> · </span>
-        <a href="/privacy.html">Privacidad</a>
+        <a href="/privacy.html">${copy.privacy}</a>
       </div>
       <div class="cookie-consent__actions">
-        <button type="button" data-cookie-choice="rejected">Rechazar analíticas</button>
-        <button type="button" data-cookie-choice="accepted">Aceptar analíticas</button>
+        <button type="button" data-cookie-choice="rejected">${copy.reject}</button>
+        <button type="button" data-cookie-choice="accepted">${copy.accept}</button>
       </div>`;
     banner.addEventListener("click", (event) => {
       const button = event.target.closest("[data-cookie-choice]");
@@ -121,6 +146,13 @@
     if (!link) return;
     event.preventDefault();
     showBanner();
+  });
+
+  window.addEventListener("mapgarraf:language-change", () => {
+    if (document.getElementById("mapgarraf-cookie-banner")) {
+      document.getElementById("mapgarraf-cookie-banner")?.remove();
+      showBanner();
+    }
   });
 
   if (getChoice() === "accepted") loadAnalytics();

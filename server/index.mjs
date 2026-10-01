@@ -156,6 +156,7 @@ const reportInput = z.object({
   departureTime: z.string().regex(/^([01]\d|2[0-3]):[0-5]\d$/).nullable().optional(),
   occupancy: occupancySchema,
   reinforcement: reinforcementSchema,
+  routeDeviationConfirmed: z.boolean().optional(),
 });
 const createReportInput = reportInput.extend({
   accuracy: z.number().finite().min(0).max(maxGpsAccuracyMeters),
@@ -269,8 +270,10 @@ app.post("/api/delays", delayLimiter, writeLimiter, (req, res) => {
 app.post("/api/vehicles", createLimiter, writeLimiter, (req, res) => {
   const input = parseBody(createReportInput, req, res);
   if (!input) return;
-  if (!isWithinRouteCorridor(input.latitude, input.longitude, input.direction)) {
-    return res.status(400).json({ error: "La ubicación no está cerca del recorrido del bus." });
+  const withinRoute = isWithinRouteCorridor(input.latitude, input.longitude, input.direction);
+  const withinConfirmedDetour = input.routeDeviationConfirmed && isWithinRouteCorridor(input.latitude, input.longitude, input.direction, 8_000);
+  if (!withinRoute && !withinConfirmedDetour) {
+    return res.status(400).json({ error: input.routeDeviationConfirmed ? "La ubicación queda demasiado lejos para validar el desvío." : "La ubicación queda fuera del recorrido habitual.", code: input.routeDeviationConfirmed ? "LOCATION_TOO_FAR" : "LOCATION_OFF_ROUTE" });
   }
   const now = Date.now();
   db.prepare("DELETE FROM bus_reports WHERE updated_at < ?").run(now - 24 * 60 * 60 * 1000);
@@ -320,8 +323,10 @@ app.patch("/api/vehicles/:id", writeLimiter, (req, res) => {
   }
   const now = Date.now();
   if (input.latitude !== undefined) {
-    if (!isWithinRouteCorridor(input.latitude, input.longitude, report.direction)) {
-      return res.status(400).json({ error: "La ubicación no está cerca del recorrido del bus." });
+    const withinRoute = isWithinRouteCorridor(input.latitude, input.longitude, report.direction);
+    const withinConfirmedDetour = input.routeDeviationConfirmed && isWithinRouteCorridor(input.latitude, input.longitude, report.direction, 8_000);
+    if (!withinRoute && !withinConfirmedDetour) {
+      return res.status(400).json({ error: input.routeDeviationConfirmed ? "La ubicación queda demasiado lejos para validar el desvío." : "La ubicación queda fuera del recorrido habitual.", code: input.routeDeviationConfirmed ? "LOCATION_TOO_FAR" : "LOCATION_OFF_ROUTE" });
     }
   }
   const fields = {

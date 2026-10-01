@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowDownUp,
+  AlertTriangle,
   Bell,
   BusFront,
   Check,
@@ -16,6 +17,7 @@ import {
   Moon,
   MapPinned,
   MapPin,
+  Menu,
   Minimize2,
   Navigation,
   Radio,
@@ -34,7 +36,10 @@ import { getReportStatus } from "./reportStatus";
 import { estimateCurrentPosition, estimateMinutesUntilArrival, estimateRouteStatus, getGhostBuses, ghostsApplyToday, unclaimedGhosts, type GhostBus } from "./ghostBuses";
 import { getNextSharedArrival, getNextTheoreticalArrival } from "./stopArrivals";
 import LegalPage, { legalKindFromPath } from "./LegalPage";
+import SiteFooter from "./SiteFooter";
+import { LanguagePicker, useLanguage } from "./i18n";
 import { hasConflictingDepartures } from "../shared/reportIdentity.mjs";
+import { distanceFromRouteMeters, isPossibleRouteDeviation } from "./routeDeviation";
 
 type Occupancy = "low" | "medium" | "high" | null;
 type ShareSession = { id: string; token: string; deleteToken: string };
@@ -53,7 +58,7 @@ const SEEN_ANNOUNCEMENTS_KEY = "mapgarraf-seen-announcements-v1";
 const SAVED_BUS_COOKIE_GRACE_MS = 24 * 60 * 60_000;
 type PendingDelete = { id: string; token: string; expiresAt: number };
 type SavedCurrentBus = { direction: Direction; departureTime: string; expiresAt: number; reinforcement: boolean; resumeSharing: boolean };
-type ApiError = Error & { status?: number };
+type ApiError = Error & { status?: number; code?: string };
 type InstallPrompt = Event & { prompt: () => Promise<void>; userChoice: Promise<{ outcome: "accepted" | "dismissed" }> };
 
 const initialDraft: Draft = { departureTime: "", occupancy: null, reinforcement: false };
@@ -215,6 +220,7 @@ async function retryPendingDeletes() {
 }
 
 export default function App() {
+  const { language, t } = useLanguage();
   const [routePath, setRoutePath] = useState(() => window.location.pathname);
   const [savedCurrentBus, setSavedCurrentBus] = useState<SavedCurrentBus | null>(() => readCurrentBusCookie());
   const [direction, setDirection] = useState<Direction>(() => savedCurrentBus?.direction ?? "to-tarragona");
@@ -227,6 +233,8 @@ export default function App() {
   const [reportsLoaded, setReportsLoaded] = useState(false);
   const [reportsFetchSucceeded, setReportsFetchSucceeded] = useState(false);
   const [announcementOpen, setAnnouncementOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [pendingRoutePosition, setPendingRoutePosition] = useState<GeolocationPosition | null>(null);
   const [shareState, setShareState] = useState<"idle" | "requesting" | "sharing">("idle");
   const [myReportId, setMyReportId] = useState<string | null>(null);
   const [draft, setDraft] = useState<Draft>(() => savedCurrentBus
@@ -256,6 +264,9 @@ export default function App() {
   const mapCloseButtonRef = useRef<HTMLButtonElement>(null);
   const restoredCurrentBusRef = useRef<string | null>(null);
   const autoShareAttemptedRef = useRef<string | null>(null);
+  const pendingRoutePositionRef = useRef<GeolocationPosition | null>(null);
+  const routeDeviationConfirmedRef = useRef(false);
+  const routeDeviationDeclinedRef = useRef(false);
   const sessionRef = useRef<ShareSession | null>(null);
   const watchRef = useRef<number | null>(null);
   const heartbeatRef = useRef<number | null>(null);
@@ -278,18 +289,18 @@ export default function App() {
     try {
       const query = new URLSearchParams({ direction: directionRef.current });
       const response = await fetch(`/api/vehicles?${query}`, { headers: { Accept: "application/json" } });
-      if (!response.ok) throw await responseError(response);
+      if (!response.ok) throw await responseError(response, t);
       const data = (await response.json()) as { reports: BusReport[] };
       const receivedAt = Date.now();
       setReports(data.reports.map((report) => ({ ...report, receivedAt })));
       setReportsFetchSucceeded(true);
     } catch {
-      if (!quiet) setNotice("No se pudo actualizar el mapa. Revisa la conexión e inténtalo de nuevo.");
+      if (!quiet) setNotice(t("No se pudo actualizar el mapa. Revisa la conexión e inténtalo de nuevo."));
     } finally {
       setReportsLoaded(true);
       if (!quiet) setLoadingReports(false);
     }
-  }, []);
+  }, [t]);
 
   const fetchDelayReports = useCallback(async () => {
     try {
@@ -321,6 +332,13 @@ export default function App() {
     window.addEventListener("beforeinstallprompt", onInstallPrompt);
     return () => window.removeEventListener("beforeinstallprompt", onInstallPrompt);
   }, []);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape") setMenuOpen(false); };
+    window.addEventListener("keydown", closeOnEscape);
+    return () => window.removeEventListener("keydown", closeOnEscape);
+  }, [menuOpen]);
 
   useEffect(() => {
     const latest = ANNOUNCEMENTS[0];
@@ -459,6 +477,8 @@ export default function App() {
         displayedPosition = { latitude: estimatedPosition.latitude, longitude: estimatedPosition.longitude };
       }
       const timing = estimateRouteStatus(direction, report, now, displayedPosition);
+      const routeDistance = distanceFromRouteMeters(report.latitude, report.longitude, direction);
+      const deviationMeters = isPossibleRouteDeviation(routeDistance, report.accuracy) ? routeDistance : null;
       return [{
         ...report,
         ...(estimatedPosition ? { ...estimatedPosition, accuracy: null, estimated: true } : {}),
@@ -467,6 +487,7 @@ export default function App() {
         tripDepartureTime: timing.tripDepartureTime,
         nextStop: timing.nextStop ?? estimatedPosition?.nextStop,
         minutesToNextStop: timing.minutesToNextStop,
+        deviationMeters,
       }];
     });
   }, [reports, direction, myReportId, now]);
@@ -531,8 +552,8 @@ export default function App() {
     setTrackedMapBusId(null);
     setMapExpanded(false);
     setNotice(hardExpired && !arrived
-      ? "El trayecto guardado ha caducado y se ha cancelado."
-      : "El bus guardado ya ha llegado, según el horario o la estimación de su última posición compartida.");
+      ? t("El trayecto guardado ha caducado y se ha cancelado.")
+      : t("El bus guardado ya ha llegado, según el horario o la estimación de su última posición compartida."));
     if (sessionRef.current) void stopSharing(true);
   }, [savedCurrentBus, reports, reportsFetchSucceeded, now]);
 
@@ -570,7 +591,7 @@ export default function App() {
   async function submitDelayReport(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (!currentDirection.departures.includes(draft.departureTime)) {
-      setDelayNotice("Primero elige una salida en Horarios para poder avisar del retraso.");
+      setDelayNotice(t("Primero elige una salida en Horarios para poder avisar del retraso."));
       return;
     }
     setDelaySubmitting(true);
@@ -581,13 +602,13 @@ export default function App() {
         headers: { "Content-Type": "application/json", Accept: "application/json" },
         body: JSON.stringify({ direction, departureTime: draft.departureTime, delayMinutes, stage: shareState === "sharing" ? "in-route" : "not-arrived" }),
       });
-      if (!response.ok) throw await responseError(response);
+      if (!response.ok) throw await responseError(response, t);
       const data = (await response.json()) as { report: DelayReport };
       setDelayReports((current) => [data.report, ...current.filter((item) => item.id !== data.report.id)]);
-      setDelayNotice("Aviso enviado. Gracias por ayudar a los demás viajeros.");
+      setDelayNotice(t("Aviso enviado. Gracias por ayudar a los demás viajeros."));
       setDelayOpen(false);
     } catch (error) {
-      setDelayNotice(error instanceof Error ? error.message : "No se pudo enviar el aviso. Revisa la conexión.");
+      setDelayNotice(t(error instanceof Error ? error.message : "No se pudo enviar el aviso. Revisa la conexión."));
     } finally { setDelaySubmitting(false); }
   }
   const selectedStopTimes = currentDirection.departures.map((time) => shiftClock(time, currentDirection.stopOffsets[scheduleStopIndex] || 0));
@@ -623,7 +644,20 @@ export default function App() {
     }
   }, [activeReports, mapExpanded, trackedMapBusId]);
 
-  async function sendPosition(position: GeolocationPosition, force = false) {
+  function askAboutRouteDeviation(position: GeolocationPosition, error: unknown) {
+    if ((error as ApiError)?.code !== "LOCATION_OFF_ROUTE") return false;
+    if (routeDeviationDeclinedRef.current) {
+      setNotice(t("No he actualizado la ubicación: se mantiene la última señal porque no confirmaste un desvío."));
+      return true;
+    }
+    pendingRoutePositionRef.current = position;
+    setPendingRoutePosition(position);
+    setShareState(sessionRef.current ? "sharing" : "requesting");
+    return true;
+  }
+
+  async function sendPosition(position: GeolocationPosition, force = false, routeConfirmed = routeDeviationConfirmedRef.current) {
+    if (pendingRoutePositionRef.current && !routeConfirmed) return;
     latestPositionRef.current = position;
     if (creatingRef.current || updatingLocationRef.current) {
       queuedPositionRef.current = position;
@@ -643,6 +677,7 @@ export default function App() {
       departureTime: currentDraft.departureTime || null,
       occupancy: currentDraft.occupancy,
       reinforcement: currentDraft.reinforcement,
+      ...(routeConfirmed ? { routeDeviationConfirmed: true } : {}),
     };
 
     if (!sessionRef.current) {
@@ -653,24 +688,27 @@ export default function App() {
           headers: { "Content-Type": "application/json", Accept: "application/json" },
           body: JSON.stringify({ ...payload, direction: directionRef.current }),
         });
-        if (!response.ok) throw await responseError(response);
+        if (!response.ok) throw await responseError(response, t);
         const data = (await response.json()) as { report: BusReport; shareToken: string; deleteToken: string };
         const session = { id: data.report.id, token: data.shareToken, deleteToken: data.deleteToken };
         sessionRef.current = session;
         setMyReportId(session.id);
         setShareState("sharing");
         setCurrentBusResumeSharing(true);
-        setNotice("Ubicación compartida. Deja esta pantalla abierta mientras viajas.");
+        routeDeviationConfirmedRef.current = routeConfirmed;
+        routeDeviationDeclinedRef.current = false;
+        setNotice(t("Ubicación compartida. Deja esta pantalla abierta mientras viajas."));
         lastSentAtRef.current = Date.now();
         lastSentPointRef.current = { lat, lng };
         setReports((current) => [data.report, ...current.filter((item) => item.id !== data.report.id)]);
       } catch (error) {
+        if (askAboutRouteDeviation(position, error)) return;
         setShareState("idle");
         if (watchRef.current !== null) navigator.geolocation.clearWatch(watchRef.current);
         watchRef.current = null;
         if (heartbeatRef.current !== null) window.clearInterval(heartbeatRef.current);
         heartbeatRef.current = null;
-        setNotice(errorMessage(error, "No se pudo publicar la ubicación. Se volverá a intentar."));
+        setNotice(t(errorMessage(error, "No se pudo publicar la ubicación. Se volverá a intentar.")));
       } finally {
         creatingRef.current = false;
         const queued = queuedPositionRef.current;
@@ -691,19 +729,22 @@ export default function App() {
         },
         body: JSON.stringify(payload),
       });
-      if (!response.ok) throw await responseError(response);
+      if (!response.ok) throw await responseError(response, t);
       const data = (await response.json()) as { report: BusReport };
       lastSentAtRef.current = Date.now();
       lastSentPointRef.current = { lat, lng };
       setReports((current) => [data.report, ...current.filter((item) => item.id !== data.report.id)]);
       setShareState("sharing");
+      routeDeviationConfirmedRef.current = routeConfirmed;
+      routeDeviationDeclinedRef.current = false;
       setNotice("");
     } catch (error) {
+      if (askAboutRouteDeviation(position, error)) return;
       if ((error as ApiError).status === 404) {
         sessionRef.current = null;
         setMyReportId(null);
       }
-      setNotice(errorMessage(error, "No se pudo actualizar la posición. Comprueba la conexión."));
+      setNotice(t(errorMessage(error, "No se pudo actualizar la posición. Comprueba la conexión.")));
     } finally {
       updatingLocationRef.current = false;
       const queued = queuedPositionRef.current;
@@ -712,18 +753,45 @@ export default function App() {
     }
   }
 
+  function answerRouteDeviation(confirmed: boolean) {
+    const position = pendingRoutePositionRef.current;
+    pendingRoutePositionRef.current = null;
+    setPendingRoutePosition(null);
+    if (!position) return;
+    if (confirmed) {
+      routeDeviationConfirmedRef.current = true;
+      routeDeviationDeclinedRef.current = false;
+      setNotice(t("Desvío confirmado. La posición se marcará como fuera del recorrido habitual."));
+      void sendPosition(position, true, true);
+      return;
+    }
+    routeDeviationDeclinedRef.current = true;
+    setNotice(t("No he actualizado la ubicación; se mantiene la última señal porque no confirmaste un desvío."));
+    if (!sessionRef.current) {
+      if (watchRef.current !== null) navigator.geolocation.clearWatch(watchRef.current);
+      watchRef.current = null;
+      if (heartbeatRef.current !== null) window.clearInterval(heartbeatRef.current);
+      heartbeatRef.current = null;
+      setShareState("idle");
+    }
+  }
+
   function startSharing() {
     setNotice("");
     if (!draftRef.current.departureTime) {
-      setNotice("Selecciona la hora de salida del bus antes de compartir ubicación.");
+      setNotice(t("Selecciona la hora de salida del bus antes de compartir ubicación."));
       document.getElementById("required-departure-time")?.focus();
       return;
     }
     if (!("geolocation" in navigator)) {
-      setNotice("Este navegador no ofrece geolocalización. Abre la web en Safari o Chrome con conexión segura.");
+      setNotice(t("Este navegador no ofrece geolocalización. Abre la web en Safari o Chrome con conexión segura."));
       return;
     }
     if (watchRef.current !== null) return;
+    if (!sessionRef.current) {
+      routeDeviationConfirmedRef.current = false;
+      routeDeviationDeclinedRef.current = false;
+    }
     latestPositionRef.current = null;
     lastSentAtRef.current = 0;
     lastSentPointRef.current = null;
@@ -744,7 +812,7 @@ export default function App() {
           : error.code === error.TIMEOUT
             ? "El GPS está tardando. Sal al exterior e inténtalo de nuevo."
             : "No se pudo obtener la ubicación. Comprueba los permisos y vuelve a intentarlo.";
-        setNotice(message);
+        setNotice(t(message));
       },
       { enableHighAccuracy: true, maximumAge: 8_000, timeout: 20_000 },
     );
@@ -756,6 +824,10 @@ export default function App() {
 
   async function stopSharing(expiredTrip = false) {
     setCurrentBusResumeSharing(false);
+    routeDeviationConfirmedRef.current = false;
+    routeDeviationDeclinedRef.current = false;
+    pendingRoutePositionRef.current = null;
+    setPendingRoutePosition(null);
     if (watchRef.current !== null) navigator.geolocation.clearWatch(watchRef.current);
     watchRef.current = null;
     if (heartbeatRef.current !== null) window.clearInterval(heartbeatRef.current);
@@ -775,19 +847,19 @@ export default function App() {
           headers: { "x-delete-token": session.deleteToken },
         });
         if (!response.ok && response.status !== 404) rememberPendingDelete(session);
-        setNotice(expiredTrip
+        setNotice(t(expiredTrip
           ? "El trayecto ha llegado a su hora prevista y se ha dejado de compartir."
           : response.ok || response.status === 404
             ? "Has dejado de compartir y la señal se ha retirado del mapa."
-            : "Has dejado de compartir. Reintentaré borrar la señal cuando vuelva la conexión; mientras tanto dejará de ser GPS reciente y se estimará hasta la llegada prevista.");
+            : "Has dejado de compartir. Reintentaré borrar la señal cuando vuelva la conexión; mientras tanto dejará de ser GPS reciente y se estimará hasta la llegada prevista."));
       } catch {
         rememberPendingDelete(session);
-        setNotice(expiredTrip
+        setNotice(t(expiredTrip
           ? "El trayecto ha llegado a su hora prevista. Reintentaré borrar la señal cuando vuelva la conexión."
-          : "Has dejado de compartir. Reintentaré borrar la señal cuando vuelva la conexión; mientras tanto dejará de ser GPS reciente y se estimará hasta la llegada prevista.");
+          : "Has dejado de compartir. Reintentaré borrar la señal cuando vuelva la conexión; mientras tanto dejará de ser GPS reciente y se estimará hasta la llegada prevista."));
       }
     } else {
-      setNotice(expiredTrip ? "El trayecto ha llegado a su hora prevista y se ha cancelado." : "Has dejado de compartir.");
+      setNotice(t(expiredTrip ? "El trayecto ha llegado a su hora prevista y se ha cancelado." : "Has dejado de compartir."));
     }
   }
 
@@ -805,11 +877,11 @@ export default function App() {
           ...(fields.reinforcement !== undefined ? { reinforcement: fields.reinforcement } : {}),
         }),
       });
-      if (!response.ok) throw await responseError(response);
+      if (!response.ok) throw await responseError(response, t);
       const data = (await response.json()) as { report: BusReport };
       setReports((current) => [data.report, ...current.filter((report) => report.id !== data.report.id)]);
     } catch (error) {
-      setNotice(errorMessage(error, "No se pudo actualizar este dato; la ubicación sigue compartiéndose."));
+      setNotice(t(errorMessage(error, "No se pudo actualizar este dato; la ubicación sigue compartiéndose.")));
     }
   }
 
@@ -822,6 +894,8 @@ export default function App() {
     setScheduleStopIndex(0);
     setExpandedStopIndex(null);
     setDraftValue("departureTime", "");
+    routeDeviationConfirmedRef.current = false;
+    routeDeviationDeclinedRef.current = false;
     setNotice("");
   }
 
@@ -842,8 +916,8 @@ export default function App() {
   }
 
   const directionCard = (
-    <section className="direction-card" aria-label="Selecciona el sentido del viaje">
-    <div className="section-kicker"><ArrowDownUp size={15} /> ¿Hacia dónde vas?</div>
+    <section className="direction-card" aria-label={t("Selecciona el sentido del viaje")}>
+    <div className="section-kicker"><ArrowDownUp size={15} /> {t("¿Hacia dónde vas?")}</div>
     <div className="direction-switch">
       <button className={direction === "to-tarragona" ? "selected" : ""} aria-pressed={direction === "to-tarragona"} disabled={shareState !== "idle"} onClick={() => void chooseDirection("to-tarragona")}>
         <span>Vilanova</span><span className="direction-arrow">→</span><span>Tarragona</span>
@@ -859,25 +933,25 @@ export default function App() {
   useEffect(() => {
     const seo = legalKind ? LEGAL_SEO[legalKind] : PAGE_SEO[page === SCHEDULE_PAGE ? "schedule" : page === MAP_PAGE ? "map" : "stops"];
     const canonicalPath = legalKind ? `/${legalKind}.html` : PAGE_PATHS[page];
-    document.title = seo.title;
+    document.title = t(seo.title);
     const update = (selector: string, value: string, attribute = "content") => {
       const element = document.querySelector<HTMLMetaElement | HTMLLinkElement>(selector);
       if (element) element.setAttribute(attribute, value);
     };
-    update('meta[name="description"]', seo.description);
-    update('meta[property="og:title"]', seo.title);
-    update('meta[property="og:description"]', seo.description);
-    update('meta[name="twitter:title"]', seo.title);
-    update('meta[name="twitter:description"]', seo.description);
+    update('meta[name="description"]', t(seo.description));
+    update('meta[property="og:title"]', t(seo.title));
+    update('meta[property="og:description"]', t(seo.description));
+    update('meta[name="twitter:title"]', t(seo.title));
+    update('meta[name="twitter:description"]', t(seo.description));
     update('link[rel="canonical"]', `https://bus.nekokoneko.org${canonicalPath}`, "href");
     update('meta[property="og:url"]', `https://bus.nekokoneko.org${canonicalPath}`);
-  }, [legalKind, page]);
+  }, [legalKind, page, t]);
   if (legalKind) return <div className="app-shell legal-shell">
     <header className="topbar">
-      <a className="brand" href="/" aria-label="MapGarraf, inicio"><span className="brand-mark"><BusGarrafIcon size={40} /></span><span><strong>MapGarraf</strong><small>BUSGARRAF · COMUNIDAD</small></span></a>
+      <a className="brand" href="/" aria-label={t("MapGarraf, inicio")}><span className="brand-mark"><BusGarrafIcon size={40} /></span><span><strong>MapGarraf</strong><small>BUSGARRAF · {t("COMUNIDAD")}</small></span></a>
       <div className="topbar-actions">
-        <button className="icon-button" onClick={toggleTheme} aria-label={theme === "dark" ? "Activar modo claro" : "Activar modo oscuro"}>{theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}</button>
-        <a className="icon-button legal-home-button" href="/" aria-label="Volver al mapa"><MapPinned size={18} /></a>
+        <button className="icon-button" onClick={toggleTheme} aria-label={theme === "dark" ? t("Activar modo claro") : t("Activar modo oscuro")}>{theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}</button>
+        <a className="icon-button legal-home-button" href="/" aria-label={t("Volver al mapa")}><MapPinned size={18} /></a>
       </div>
     </header>
     <LegalPage kind={legalKind} onShowAnnouncements={() => setAnnouncementOpen(true)} />
@@ -887,30 +961,28 @@ export default function App() {
   return (
     <div className="app-shell">
       <header className="topbar">
-        <a className="brand" href={PAGE_PATHS[DEFAULT_PAGE]} aria-label="MapGarraf, inicio" onClick={(event) => {
+        <a className="brand" href={PAGE_PATHS[DEFAULT_PAGE]} aria-label={t("MapGarraf, inicio")} onClick={(event) => {
           if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
           event.preventDefault();
           goToPage(DEFAULT_PAGE);
         }}>
           <span className="brand-mark"><BusGarrafIcon size={40} /></span>
-          <span><strong>MapGarraf</strong><small>BUSGARRAF · COMUNIDAD</small></span>
+          <span><strong>MapGarraf</strong><small>BUSGARRAF · {t("COMUNIDAD")}</small></span>
         </a>
         <div className="topbar-actions">
-          <button className="icon-button" onClick={toggleTheme} aria-label={theme === "dark" ? "Activar modo claro" : "Activar modo oscuro"}>{theme === "dark" ? <Sun size={18} /> : <Moon size={18} />}</button>
-          <button className="icon-button install-button" onClick={() => void installApp()} aria-label="Instalar aplicación"><Download size={19} /></button>
-          <button className="icon-button" onClick={() => void fetchReports()} aria-label="Actualizar buses"><RefreshCw size={18} className={loadingReports ? "spin" : ""} /></button>
+          <button type="button" className="icon-button menu-trigger" aria-label={t("Menú")} aria-expanded={menuOpen} onClick={() => setMenuOpen(true)}><Menu size={20} /></button>
         </div>
       </header>
 
       <main id="inicio" className="pager" ref={pagerRef} onScroll={onPagerScroll}>
-        <section className="page" id="page-schedule" aria-label="Horarios" inert={page !== SCHEDULE_PAGE}>
+        <section className="page" id="page-schedule" aria-label={t("Horarios")} inert={page !== SCHEDULE_PAGE}>
           <div className="main-content">
-            <div className="page-heading"><div className="eyebrow"><span className="eyebrow-dot" />LUNES A VIERNES · DÍAS LABORABLES</div>{page === SCHEDULE_PAGE ? <h1>Horarios del BusGarraf</h1> : <h2>Horarios del BusGarraf</h2>}</div>
+            <div className="page-heading"><div className="eyebrow"><span className="eyebrow-dot" />{t("LUNES A VIERNES · DÍAS LABORABLES")}</div>{page === SCHEDULE_PAGE ? <h1>{t("Horarios del BusGarraf")}</h1> : <h2>{t("Horarios del BusGarraf")}</h2>}</div>
             {directionCard}
             <section className="detail-panel">
               <div className="detail-title"><div><h3>{currentDirection.start} → {currentDirection.end}</h3></div><Clock3 size={19} /></div>
-              <p className="schedule-caption">Salidas del PDF del operador para días laborables, consultado el 25 de septiembre de 2026. Hay cambios por temporada, festivos e incidencias; verifica antes de salir.</p>
-              <label className="schedule-stop-select">Ver salidas en
+              <p className="schedule-caption">{t("Salidas del PDF del operador para días laborables, consultado el 25 de septiembre de 2026. Hay cambios por temporada, festivos e incidencias; verifica antes de salir.")}</p>
+              <label className="schedule-stop-select">{t("Ver salidas en")}
                 <select value={scheduleStopIndex} onChange={(event) => setScheduleStopIndex(Number(event.target.value))}>
                   {currentDirection.stops.map((stop, index) => <option key={`${stop}-${index}`} value={index}>{townForStop(stop)} — {stop}</option>)}
                 </select>
@@ -920,23 +992,24 @@ export default function App() {
                 // timing model needs its departure from the route's first stop.
                 setDraftValue("departureTime", currentDirection.departures[index]);
                 rememberCurrentBus(currentDirection.departures[index]);
-                if (sessionRef.current) void updateReport({ departureTime: currentDirection.departures[index] });
                 setShowOptions(true);
+                if (sessionRef.current) void updateReport({ departureTime: currentDirection.departures[index] });
                 goToPage(MAP_PAGE);
                 window.setTimeout(() => document.querySelector(".share-card")?.scrollIntoView({ behavior: "smooth", block: "center" }), 350);
               }}>{time}</button>)}</div>
-              <p className="last-service">En este documento, la última llegada al destino figura a las {currentDirection.arrivalAtOtherEnd}.</p>
-              <div className="source-links"><a href={officialScheduleUrl} target="_blank" rel="noreferrer">Horario actualizado del operador <ExternalLink size={14} /></a><a href={publishedPdfUrl} target="_blank" rel="noreferrer">PDF consultado <ExternalLink size={14} /></a><a href={officialTariffUrl} target="_blank" rel="noreferrer">Tarifas oficiales <ExternalLink size={14} /></a></div>
+              <p className="last-service">{t("En este documento, la última llegada al destino figura a las")} {currentDirection.arrivalAtOtherEnd}.</p>
+              <div className="source-links"><a href={officialScheduleUrl} target="_blank" rel="noreferrer">{t("Horario actualizado del operador")} <ExternalLink size={14} /></a><a href={publishedPdfUrl} target="_blank" rel="noreferrer">{t("PDF consultado")} <ExternalLink size={14} /></a><a href={officialTariffUrl} target="_blank" rel="noreferrer">{t("Tarifas oficiales")} <ExternalLink size={14} /></a></div>
             </section>
+            <SiteFooter onShowAnnouncements={() => setAnnouncementOpen(true)} />
           </div>
         </section>
 
-        <section className="page" id="page-map" aria-label="Mapa" inert={page !== MAP_PAGE}>
+        <section className="page" id="page-map" aria-label={t("Mapa")} inert={page !== MAP_PAGE}>
         <div className="main-content">
         <section className="intro">
-          <div className="eyebrow"><span className="eyebrow-dot" />TARRAGONA ↔ VILANOVA I LA GELTRÚ</div>
-          {page === MAP_PAGE ? <h1>BusGarraf<br /><span>Tarragona ↔ Vilanova</span></h1> : <h2 className="intro-title">BusGarraf<br /><span>Tarragona ↔ Vilanova</span></h2>}
-          <p>Horarios, paradas y mapa comunitario de la ruta entre Tarragona y Vilanova i la Geltrú. Las posiciones y llegadas son compartidas o estimadas, no datos oficiales. Puedes explorar el mapa sin elegir una salida.</p>
+          <div className="eyebrow"><span className="eyebrow-dot" />{t("TARRAGONA ↔ VILANOVA I LA GELTRÚ")}</div>
+          {page === MAP_PAGE ? <h1>BusGarraf<br /><span>{t("Tarragona ↔ Vilanova")}</span></h1> : <h2 className="intro-title">BusGarraf<br /><span>{t("Tarragona ↔ Vilanova")}</span></h2>}
+          <p>{t("Horarios, paradas y mapa comunitario de la ruta entre Tarragona y Vilanova i la Geltrú. Las posiciones y llegadas son compartidas o estimadas, no datos oficiales. Puedes explorar el mapa sin elegir una salida.")}</p>
         </section>
 
         {directionCard}
@@ -945,12 +1018,12 @@ export default function App() {
           <div className="share-copy">
             <span className="share-icon"><LocateFixed size={19} /></span>
             <div>
-              <strong>{shareState === "sharing" ? "Estás compartiendo" : shareState === "requesting" ? "Buscando tu ubicación…" : "¿Ya vas en el bus?"}</strong>
-              <span>{shareState === "sharing" ? "Solo mientras mantengas la pantalla abierta." : "Con un toque, avisa al resto de viajeros."}</span>
+              <strong>{t(shareState === "sharing" ? "Estás compartiendo" : shareState === "requesting" ? "Buscando tu ubicación…" : "¿Ya vas en el bus?")}</strong>
+              <span>{t(shareState === "sharing" ? "Solo mientras mantengas la pantalla abierta." : "Con un toque, avisa al resto de viajeros.")}</span>
             </div>
           </div>
           <label className="required-departure" htmlFor="required-departure-time">
-            <span>Hora de salida desde {currentDirection.start}<strong aria-hidden="true"> *</strong></span>
+            <span>{t("Hora de salida desde")} {t(currentDirection.start)}<strong aria-hidden="true"> *</strong></span>
             <select
               id="required-departure-time"
               value={draft.departureTime}
@@ -968,96 +1041,79 @@ export default function App() {
                 if (sessionRef.current) void updateReport({ departureTime: value });
               }}
             >
-              <option value="">Selecciona la salida del horario…</option>
+              <option value="">{t("Selecciona la salida del horario…")}</option>
               {currentDirection.departures.map((departure) => <option key={departure} value={departure}>{departure}</option>)}
             </select>
-            {!draft.departureTime && <small>La necesitamos para calcular si el bus va adelantado o con retraso.</small>}
+            {!draft.departureTime && <small>{t("La necesitamos para calcular si el bus va adelantado o con retraso.")}</small>}
           </label>
-          <p className="location-privacy"><strong>Ten en cuenta:</strong> el GPS exacto es público mientras se actualiza. Tras 1 minuto sin GPS deja de mostrarse como posición real y pasa a estimarse con el horario, hasta la llegada prevista (máximo 105 min desde la última lectura). Se borra del servidor en 24 h. «Dejar de compartir» solicita el borrado inmediato.</p>
+          <p className="location-privacy">{t("Tu ubicación se comparte con otros viajeros mientras el GPS se actualiza; después se muestra como estimación.")}</p>
           {shareState === "sharing" ? (
-            <button className="share-button stop-button" onClick={() => void stopSharing()}><X size={18} /> Dejar de compartir</button>
+            <button className="share-button stop-button" onClick={() => void stopSharing()}><X size={18} /> {t("Dejar de compartir")}</button>
           ) : (
             <button className="share-button" onClick={startSharing} disabled={shareState === "requesting" || !draft.departureTime}>
-              {shareState === "requesting" ? <><span className="button-spinner" /> Esperando GPS</> : <><Navigation size={17} fill="currentColor" /> Compartir este bus</>}
+              {shareState === "requesting" ? <><span className="button-spinner" /> {t("Esperando GPS")}</> : <><Navigation size={17} fill="currentColor" /> {t("Compartir este bus")}</>}
             </button>
           )}
           <div className="delay-report-inline">
             {!delayOpen ? <button type="button" className="delay-report-toggle" aria-expanded="false" disabled={!draft.departureTime || shareState === "requesting"} onClick={() => { setDelayOpen(true); setDelayNotice(""); }}>
-              <Clock3 size={16} /><span><strong>¿Va con retraso?</strong><small>{draft.departureTime ? `Salida ${draft.departureTime} · ${shareState === "sharing" ? "bus en ruta" : "aún no ha llegado a la primera parada"}` : "Elige una salida en Horarios"}</small></span><b>Reportar</b>
+              <Clock3 size={16} /><span><strong>{t("¿Va con retraso?")}</strong><small>{draft.departureTime ? `${t("Salida")} ${draft.departureTime} · ${t(shareState === "sharing" ? "bus en ruta" : "aún no ha llegado a la primera parada")}` : t("Elige una salida en Horarios")}</small></span><b>{t("Reportar")}</b>
             </button> : <>
-              <div className="delay-inline-heading"><Clock3 size={16} /><strong>Reportar retraso · salida {draft.departureTime}</strong></div>
+              <div className="delay-inline-heading"><Clock3 size={16} /><strong>{t("Reportar retraso · salida")} {draft.departureTime}</strong></div>
               <form className="delay-form" onSubmit={submitDelayReport}>
-                <label>Retraso aproximado
+                <label>{t("Retraso aproximado")}
                   <select value={delayMinutes ?? "indefinite"} onChange={(event) => setDelayMinutes(event.target.value === "indefinite" ? null : Number(event.target.value))}>
                     {[5, 10, 15, 20, 30, 45, 60, 90, 120].map((minutes) => <option key={minutes} value={minutes}>≈ {minutes} min</option>)}
-                    <option value="indefinite">Indefinido · no se sabe</option>
+                    <option value="indefinite">{t("Indefinido · no se sabe")}</option>
                   </select>
                 </label>
-                <div className="delay-form-actions"><button className="delay-submit" type="submit" disabled={delaySubmitting}>{delaySubmitting ? "Enviando…" : <><Send size={16} /> Enviar aviso</>}</button><button className="delay-cancel" type="button" onClick={() => setDelayOpen(false)}>Cancelar</button></div>
+                <div className="delay-form-actions"><button className="delay-submit" type="submit" disabled={delaySubmitting}>{delaySubmitting ? t("Enviando…") : <><Send size={16} /> {t("Enviar aviso")}</>}</button><button className="delay-cancel" type="button" onClick={() => setDelayOpen(false)}>{t("Cancelar")}</button></div>
               </form>
-              <p className="delay-disclaimer">Se marcará como {shareState === "sharing" ? "bus en ruta" : "bus aún no llegado a la primera parada"}. No comparte GPS.</p>
+              <p className="delay-disclaimer">{t("Se marcará como")} {t(shareState === "sharing" ? "bus en ruta" : "bus aún no llegado a la primera parada")}. {t("No comparte GPS.")}</p>
             </>}
             {delayNotice && <p className="delay-feedback" role="status">{delayNotice}</p>}
-            {delaySummaries.filter((item) => item.departureTime === draft.departureTime).length > 0 && <div className="delay-feed" aria-label="Avisos recientes de retraso para esta salida">
-              <strong className="delay-feed-title">Avisos recientes · últimas 2 h</strong>
+            {delaySummaries.filter((item) => item.departureTime === draft.departureTime).length > 0 && <div className="delay-feed" aria-label={t("Avisos recientes de retraso para esta salida")}>
+              <strong className="delay-feed-title">{t("Avisos recientes · últimas 2 h")}</strong>
               {delaySummaries.filter((item) => item.departureTime === draft.departureTime).map((item) => <div className="delay-feed-item" key={`${item.departureTime}:${item.stage}`}>
-                <span><small>{item.stage === "not-arrived" ? "Aún no había llegado a la primera parada" : "Reportado en ruta"} · hace {Math.max(0, Math.floor((now.getTime() - Date.parse(item.createdAt)) / 60_000))} min</small></span>
-                <strong>{item.delayMinutes === null ? "Indefinido" : `≈ ${item.delayMinutes} min`}{item.count > 1 ? ` · ${item.count} avisos` : ""}</strong>
+                <span><small>{t(item.stage === "not-arrived" ? "Aún no había llegado a la primera parada" : "Reportado en ruta")} · {t("hace")} {Math.max(0, Math.floor((now.getTime() - Date.parse(item.createdAt)) / 60_000))} min</small></span>
+                <strong>{item.delayMinutes === null ? t("Indefinido") : `≈ ${item.delayMinutes} min`}{item.count > 1 ? ` · ${item.count} ${t("avisos")}` : ""}</strong>
               </div>)}
             </div>}
           </div>
           <details className="privacy-details">
-            <summary>Privacidad y seguridad</summary>
-            <p>Solo enviamos ubicación tras pulsar compartir y aceptar el permiso del navegador. El GPS exacto es público mientras se actualiza y durante un minuto desde la última lectura; después, deja de considerarse una posición real y se estima con el horario, con coordenadas redondeadas a unos 100 m, hasta la llegada prevista (máximo 105 min desde la última lectura). Si vuelves a abrir la web durante ese trayecto, intentará reanudar la ubicación si ya habías iniciado la compartición y el navegador conserva el permiso. La señal se borra del servidor en un máximo de 24 h; pulsar «Dejar de compartir» solicita su borrado inmediato y, si no hay conexión, se volverá a intentar al recuperarla mientras esta pestaña siga abierta. No se crea una cuenta ni guardamos un historial de trayectos. El mapa solicita imágenes de OpenStreetMap, pero no le enviamos tu GPS. Úsalo como pasajero, nunca mientras conduces.</p>
+            <summary>{t("Privacidad y seguridad")}</summary>
+            <p>{t("Solo enviamos ubicación tras pulsar compartir y aceptar el permiso del navegador. El GPS exacto es público mientras se actualiza y durante un minuto desde la última lectura; después, deja de considerarse una posición real y se estima con el horario, con coordenadas redondeadas a unos 100 m, hasta la llegada prevista (máximo 105 min desde la última lectura). Si vuelves a abrir la web durante ese trayecto, intentará reanudar la ubicación si ya habías iniciado la compartición y el navegador conserva el permiso. La señal se borra del servidor en un máximo de 24 h; pulsar «Dejar de compartir» solicita su borrado inmediato y, si no hay conexión, se volverá a intentar al recuperarla mientras esta pestaña siga abierta. No se crea una cuenta ni guardamos un historial de trayectos. El mapa solicita imágenes de OpenStreetMap, pero no le enviamos tu GPS. Úsalo como pasajero, nunca mientras conduces.")}</p>
           </details>
           <button className="options-toggle" aria-expanded={showOptions} onClick={() => setShowOptions((value) => !value)}>
-            {showOptions ? "Ocultar opciones" : "Añadir detalles útiles (opcional)"}<ChevronDown size={15} className={showOptions ? "rotate" : ""} />
+            {t(showOptions ? "Ocultar opciones" : "Añadir detalles útiles (opcional)")}<ChevronDown size={15} className={showOptions ? "rotate" : ""} />
           </button>
-          {showOptions && (
-            <div className="extra-options">
-              <fieldset>
-                <legend>¿Cuánta gente lleva?</legend>
-                <div className="choice-row">
-                  <Choice selected={draft.occupancy === "low"} onClick={() => void updateReport({ occupancy: draft.occupancy === "low" ? null : "low" })}>Hay sitio</Choice>
-                  <Choice selected={draft.occupancy === "medium"} onClick={() => void updateReport({ occupancy: draft.occupancy === "medium" ? null : "medium" })}>Normal</Choice>
-                  <Choice selected={draft.occupancy === "high"} onClick={() => void updateReport({ occupancy: draft.occupancy === "high" ? null : "high" })}>Lleno</Choice>
-                </div>
-              </fieldset>
-              <button
-                type="button"
-                className={`reinforcement-toggle${draft.reinforcement ? " is-selected" : ""}`}
-                aria-pressed={draft.reinforcement}
-                onClick={() => {
-                  const reinforcement = !draft.reinforcement;
-                  void updateReport({ reinforcement });
-                  if (draft.departureTime) rememberCurrentBus(draft.departureTime, reinforcement);
-                }}
-              >
-                <span className="reinforcement-toggle-icon"><BusFront size={19} /></span>
-                <span className="reinforcement-toggle-copy"><strong>Bus de refuerzo</strong><small>{draft.reinforcement ? "Marcado para este bus" : "Marca si es un servicio adicional"}</small></span>
-                <span className="reinforcement-toggle-state">{draft.reinforcement ? "Sí" : "No"}</span>
-              </button>
-              <p className="privacy-note"><Signal size={14} /> El retraso se estima automáticamente con el GPS y el horario. Indicar la salida mejora el cálculo; la ocupación es voluntaria.</p>
-            </div>
-          )}
+          {showOptions && <div className="extra-options">
+            <fieldset>
+              <legend>{t("¿Cuánta gente lleva?")}</legend>
+              <div className="choice-row">
+                <Choice selected={draft.occupancy === "low"} onClick={() => void updateReport({ occupancy: draft.occupancy === "low" ? null : "low" })}>{t("Hay sitio")}</Choice>
+                <Choice selected={draft.occupancy === "medium"} onClick={() => void updateReport({ occupancy: draft.occupancy === "medium" ? null : "medium" })}>{t("Normal")}</Choice>
+                <Choice selected={draft.occupancy === "high"} onClick={() => void updateReport({ occupancy: draft.occupancy === "high" ? null : "high" })}>{t("Lleno")}</Choice>
+              </div>
+            </fieldset>
+            <button type="button" className={`reinforcement-toggle${draft.reinforcement ? " is-selected" : ""}`} aria-pressed={draft.reinforcement} onClick={() => {
+              const reinforcement = !draft.reinforcement;
+              void updateReport({ reinforcement });
+              if (draft.departureTime) rememberCurrentBus(draft.departureTime, reinforcement);
+            }}>
+              <span className="reinforcement-toggle-icon"><BusFront size={19} /></span>
+              <span className="reinforcement-toggle-copy"><strong>{t("Bus de refuerzo")}</strong><small>{t(draft.reinforcement ? "Marcado para este bus" : "Marca si es un servicio adicional")}</small></span>
+              <span className="reinforcement-toggle-state">{t(draft.reinforcement ? "Sí" : "No")}</span>
+            </button>
+            <p className="privacy-note"><Signal size={14} /> {t("El retraso se estima automáticamente con el GPS y el horario. Indicar la salida mejora el cálculo; la ocupación es voluntaria.")}</p>
+          </div>}
         </section>
 
-        {notice && <div className="notice" role="status"><span>{notice}</span><button aria-label="Cerrar aviso" onClick={() => setNotice("")}><X size={16} /></button></div>}
+        {notice && <div className="notice" role="status"><span>{notice}</span><button aria-label={t("Cerrar aviso")} onClick={() => setNotice("")}><X size={16} /></button></div>}
 
         <section className="map-section" aria-labelledby="map-title">
           <div className="section-heading">
-            <div><div className="section-kicker"><MapPinned size={15} /> MAPA DEL RECORRIDO</div><h2 id="map-title">{directionLabel[direction]}</h2></div>
-            <span className="distance-badge">≈ 50 km · 1 h 15</span>
-          </div>
-          <div className={`ghost-notice${showGhosts ? "" : " ghost-notice--off"}`} role="note">
-            <span className="ghost-notice-icon"><Ghost size={18} /></span>
-            <div>
-              <strong>{showGhosts ? "Buses fantasma · sin verificar" : "Buses fantasma ocultos"}</strong>
-              {showGhosts && <p>{ghostsToday
-                ? "Los fantasmas (violeta, línea discontinua) marcan dónde DEBERÍA estar cada bus según el horario publicado, o de dónde debería salir en los próximos minutos. Nadie ha confirmado que existan ni que circulen. Se sustituyen por la posición real cuando un viajero comparte ese bus."
-                : "El horario incorporado es de lunes a viernes, así que hoy no se muestran buses fantasma. Solo verás buses compartidos por viajeros."}</p>}
-            </div>
-            <button className="ghost-toggle" aria-pressed={showGhosts} onClick={toggleGhosts}>{showGhosts ? "Ocultar" : "Mostrar"}</button>
+            <div><div className="section-kicker"><MapPinned size={15} /> {t("MAPA DEL RECORRIDO")}</div><h2 id="map-title">{t(directionLabel[direction])}</h2></div>
+            <span className="distance-badge">{t("≈ 50 km · 1 h 15")}</span>
           </div>
           {mapExpanded && <div className="map-scrim" aria-hidden="true" onClick={() => setMapExpanded(false)} />}
           <div
@@ -1069,15 +1125,15 @@ export default function App() {
           >
             {!mapExpanded ? (
               <button ref={mapExpandButtonRef} className="map-expand-button" onClick={openExpandedMap} aria-expanded={false}>
-                <Maximize2 size={16} /><span>Ampliar mapa</span>
+                <Maximize2 size={16} /><span>{t("Ampliar mapa")}</span>
               </button>
             ) : (
               <div className="map-expanded-toolbar">
                 <div className={`map-live-summary${trackedMapReport ? " has-live-report" : ""}${trackedGhost ? " is-ghost" : ""}`} aria-live="polite">
                   <span className="map-live-indicator" />
                   <span>
-                    <strong id="map-expanded-title">{trackedGhost ? `Bus fantasma · salida ${trackedGhost.departureTime}` : trackedMapReport ? (trackedMapReport.reinforcement ? "Bus de refuerzo" : "Bus compartido") : "Recorrido completo"}</strong>
-                    <small>{trackedGhost ? `SIN VERIFICAR · estimado por horario${followMapBus ? " · siguiéndolo" : ""}` : trackedMapReport ? `${trackedMapReport.estimated ? "estimado · última señal real hace " + Math.floor(trackedMapReport.ageSeconds / 60) + " min" : trackedMapReport.ageSeconds < 60 ? "ahora" : `hace ${Math.floor(trackedMapReport.ageSeconds / 60)} min`} · ${getReportStatus(trackedMapReport.delayMinutes, trackedMapReport.delayBasis).label}${followMapBus ? " · siguiéndolo" : ""}` : "Sin buses activos; se muestra toda la ruta."}</small>
+                    <strong id="map-expanded-title">{trackedGhost ? `${t("Bus fantasma")} · ${t("Salida").toLowerCase()} ${trackedGhost.departureTime}` : trackedMapReport ? t(trackedMapReport.reinforcement ? "Bus de refuerzo" : "Bus compartido") : t("RECORRIDO COMPLETO")}</strong>
+                    <small>{trackedGhost ? `${t("SIN VERIFICAR · estimado por horario")}${followMapBus ? ` · ${t("Siguiendo").toLowerCase()}` : ""}` : trackedMapReport ? `${trackedMapReport.estimated ? `${t("ESTIMADO").toLowerCase()} · ${t("Última posición real hace").toLowerCase()} ${Math.floor(trackedMapReport.ageSeconds / 60)} min` : trackedMapReport.ageSeconds < 60 ? t("ahora") : `${t("hace")} ${Math.floor(trackedMapReport.ageSeconds / 60)} min`} · ${trackedMapReport.deviationMeters !== null && trackedMapReport.deviationMeters !== undefined ? `⚠ ${t(trackedMapReport.estimated ? "Desvío en última señal" : "Posible desvío")} · ~${Math.round(trackedMapReport.deviationMeters)} m ${t("del recorrido")}` : t(getReportStatus(trackedMapReport.delayMinutes, trackedMapReport.delayBasis).label)}${followMapBus ? ` · ${t("Siguiendo").toLowerCase()}` : ""}` : t("Sin buses activos; se muestra toda la ruta.")}</small>
                   </span>
                 </div>
                 <div className="map-expanded-actions">
@@ -1085,28 +1141,29 @@ export default function App() {
                     <select
                       className="map-bus-select"
                       value={trackedGhost?.id ?? trackedMapReport?.id ?? ""}
-                      aria-label="Elige el autobús que quieres seguir"
+                      aria-label={t("Elige el autobús que quieres seguir")}
                       onChange={(event) => {
                         setTrackedMapBusId(event.target.value);
                         setFollowMapBus(true);
                       }}
                     >
-                      {!trackedGhost && !trackedMapReport && <option value="" disabled>Elige un bus…</option>}
-                      {activeReports.map((report) => <option key={report.id} value={report.id}>{report.reinforcement ? "Refuerzo · " : ""}{report.departureTime ? `Salida ${report.departureTime}` : report.nextStop ? `Próxima: ${report.nextStop}` : "Señal compartida"}</option>)}
-                      {ghosts.map((ghost) => <option key={ghost.id} value={ghost.id}>{`Fantasma ${ghost.departureTime} · sin verificar`}</option>)}
+                      {!trackedGhost && !trackedMapReport && <option value="" disabled>{t("Elige un bus…")}</option>}
+                      {activeReports.map((report) => <option key={report.id} value={report.id}>{report.reinforcement ? t("Refuerzo · ") : ""}{report.departureTime ? `${t("Salida")} ${report.departureTime}` : report.nextStop ? `${t("Próxima:")} ${report.nextStop}` : t("Señal compartida")}</option>)}
+                      {ghosts.map((ghost) => <option key={ghost.id} value={ghost.id}>{`${t("Fantasma")} ${ghost.departureTime} · ${t("sin verificar")}`}</option>)}
                     </select>
                   )}
                   {(trackedMapReport || trackedGhost) && (
                     <button className={`map-follow-toggle${followMapBus ? " is-following" : ""}`} aria-pressed={followMapBus} onClick={() => setFollowMapBus((value) => !value)}>
-                      <LocateFixed size={15} />{followMapBus ? "Siguiendo" : "Seguir bus"}
+                      <LocateFixed size={15} />{t(followMapBus ? "Siguiendo" : "Seguir bus")}
                     </button>
                   )}
-                  <button ref={mapCloseButtonRef} className="map-close-button" aria-label="Cerrar mapa ampliado" onClick={() => setMapExpanded(false)}><Minimize2 size={18} /></button>
+                  <button ref={mapCloseButtonRef} className="map-close-button" aria-label={t("Cerrar mapa ampliado")} onClick={() => setMapExpanded(false)}><Minimize2 size={18} /></button>
                 </div>
               </div>
             )}
             <RouteMap
               direction={direction}
+              language={language}
               stops={stops}
               timetable={currentDirection}
               reports={activeReports}
@@ -1116,27 +1173,27 @@ export default function App() {
               onUserMove={() => setFollowMapBus(false)}
               followReportId={trackedGhost?.id ?? trackedMapReport?.id ?? null}
             />
-            <div className="map-legend"><span className="legend-bus"><BusGarrafIcon size={20} /></span><span>Posición compartida</span><span className="legend-status legend-status--on-time" /><span>En hora</span><span className="legend-status legend-status--late" /><span>Retraso</span><span className="legend-status legend-status--unknown" /><span>Sin dato</span><span className="legend-stop" /><span>Parada</span>{activeReports.some((report) => report.reinforcement) && <><span className="legend-reinforcement">✚</span><span>Servicio de refuerzo</span></>}{activeReports.some((report) => report.estimated) && <><span className="legend-estimated" /><span>Estimado (sin señal reciente)</span></>}{showGhosts && <><span className="legend-ghost"><Ghost size={11} /></span><span>Fantasma · sin verificar</span></>}</div>
+            <div className="map-legend"><span className="legend-bus"><BusGarrafIcon size={20} /></span><span>{t("Posición compartida")}</span><span className="legend-status legend-status--on-time" /><span>{t("En hora")}</span><span className="legend-status legend-status--late" /><span>{t("Retraso")}</span><span className="legend-status legend-status--unknown" /><span>{t("Sin dato")}</span><span className="legend-stop" /><span>{t("Parada")}</span>{activeReports.some((report) => report.reinforcement) && <><span className="legend-reinforcement">✚</span><span>{t("Servicio de refuerzo")}</span></>}{activeReports.some((report) => report.estimated) && <><span className="legend-estimated" /><span>{t("Estimado (sin señal reciente)")}</span></>}{showGhosts && <><span className="legend-ghost"><Ghost size={11} /></span><span>{t("Fantasma · sin verificar")}</span></>}</div>
           </div>
-          <p className="map-footnote">El retraso y la próxima parada se estiman comparando el GPS con el horario publicado; si no se identifica una salida compatible, aparecerá «Sin dato». No son datos oficiales y pueden variar por tráfico o paradas. Las 16 paradas usan ubicaciones de datos públicos; el trazado sigue las calles entre paradas. Los buses fantasma son solo una estimación del horario y no están verificados.</p>
+          <p className="map-footnote">{t("El retraso y la próxima parada se estiman comparando el GPS con el horario publicado; si no se identifica una salida compatible, aparecerá «Sin dato». No son datos oficiales y pueden variar por tráfico o paradas. Las 16 paradas usan ubicaciones de datos públicos; el trazado sigue las calles entre paradas. Los buses fantasma son solo una estimación del horario y no están verificados.")}</p>
         </section>
 
         <section className="reports-section">
           <div className="section-heading report-heading">
-            <div><div className="section-kicker"><Radio size={15} /> AHORA EN LA RUTA</div><h2>{activeReports.length ? `${activeReports.length} ${activeReports.length === 1 ? "señal activa" : "señales activas"}` : "Aún no hay buses verificados"}</h2></div>
-            <span className={`live-pill ${activeReports.length ? "live" : ""}`}><i />{activeReports.some((report) => !report.estimated) ? "EN VIVO" : activeReports.length ? "ESTIMADO" : "COMUNIDAD"}</span>
+            <div><div className="section-kicker"><Radio size={15} /> {t("AHORA EN LA RUTA")}</div><h2>{activeReports.length ? `${activeReports.length} ${t(activeReports.length === 1 ? "señal activa" : "señales activas")}` : t("Aún no hay buses verificados")}</h2></div>
+            <span className={`live-pill ${activeReports.length ? "live" : ""}`}><i />{t(activeReports.some((report) => !report.estimated) ? "EN VIVO" : activeReports.length ? "ESTIMADO" : "COMUNIDAD")}</span>
           </div>
           {activeReports.length ? (
             <div className="report-list">
               {activeReports.map((report) => <ReportCard key={report.id} report={report} own={report.containsOwn} />)}
             </div>
           ) : (
-            <div className="empty-state"><span className="empty-icon"><BusGarrafIcon size={39} /></span><div><strong>Sé la primera señal</strong><p>Si ya estás a bordo, comparte la ubicación del bus para ayudar a quienes esperan.</p></div></div>
+            <div className="empty-state"><span className="empty-icon"><BusGarrafIcon size={39} /></span><div><strong>{t("Sé la primera señal")}</strong><p>{t("Si ya estás a bordo, comparte la ubicación del bus para ayudar a quienes esperan.")}</p></div></div>
           )}
           {ghosts.length > 0 && (
             <div className="ghost-block">
-              <div className="ghost-block-title"><Ghost size={15} /> BUSES FANTASMA · SIN VERIFICAR</div>
-              <p>Calculados solo con el horario publicado. No hay ningún aviso de viajeros que los confirme, así que pueden no existir.</p>
+              <div className="ghost-block-title"><Ghost size={15} /> {t("BUSES FANTASMA · SIN VERIFICAR")}</div>
+              <p>{t("Calculados solo con el horario publicado. No hay ningún aviso de viajeros que los confirme, así que pueden no existir.")}</p>
               <div className="report-list">
                 {ghosts.map((ghost) => <GhostCard key={ghost.id} ghost={ghost} onClaim={() => claimGhostTrip(ghost)} />)}
               </div>
@@ -1144,28 +1201,18 @@ export default function App() {
           )}
         </section>
 
-        <section className="trust-card"><div className="trust-icon"><Compass size={19} /></div><div><strong>Una herramienta independiente</strong><p>No está afiliada a BusGarraf ni recibe datos del operador. Las posiciones son aportaciones voluntarias y no oficiales.</p></div></section>
-        <footer className="page-footer">
-          <span>Hecho para viajar mejor por el Garraf.</span>
-          <nav aria-label="Información legal" className="page-footer-links">
-            <button type="button" className="announcement-link" aria-haspopup="dialog" onClick={() => setAnnouncementOpen(true)}><Bell size={12} />Novedades</button>
-            <a href="/terms.html">Condiciones</a>
-            <a href="/privacy.html">Privacidad</a>
-            <a href="/cookies.html">Cookies</a>
-            <button type="button" data-cookie-settings>Configurar cookies</button>
-            <a href="https://busgarraf.cat/es/" target="_blank" rel="noreferrer">Web oficial <ExternalLink size={13} /></a>
-          </nav>
-        </footer>
+        <section className="trust-card"><div className="trust-icon"><Compass size={19} /></div><div><strong>{t("Una herramienta independiente")}</strong><p>{t("No está afiliada a BusGarraf ni recibe datos del operador. Las posiciones son aportaciones voluntarias y no oficiales.")}</p></div></section>
+        <SiteFooter onShowAnnouncements={() => setAnnouncementOpen(true)} />
         </div>
         </section>
 
-        <section className="page" id="page-stops" aria-label="Paradas" inert={page !== STOPS_PAGE}>
+        <section className="page" id="page-stops" aria-label={t("Paradas")} inert={page !== STOPS_PAGE}>
           <div className="main-content">
-            <div className="page-heading"><div className="eyebrow"><span className="eyebrow-dot" />RECORRIDO COMPLETO</div>{page === STOPS_PAGE ? <h1>Paradas del BusGarraf</h1> : <h2>Paradas del BusGarraf</h2>}</div>
+            <div className="page-heading"><div className="eyebrow"><span className="eyebrow-dot" />{t("RECORRIDO COMPLETO")}</div>{page === STOPS_PAGE ? <h1>{t("Paradas del BusGarraf")}</h1> : <h2>{t("Paradas del BusGarraf")}</h2>}</div>
             {directionCard}
             <section className="detail-panel stops-panel">
-              <div className="detail-title"><div><h3>16 paradas</h3></div><MapPin size={19} /></div>
-              <p className="schedule-caption stops-caption">Toca una parada para ver todos sus pasos teóricos y la próxima llegada calculada.</p>
+              <div className="detail-title"><div><h3>{t("16 paradas")}</h3></div><MapPin size={19} /></div>
+              <p className="schedule-caption stops-caption">{t("Toca una parada para ver todos sus pasos teóricos y la próxima llegada calculada.")}</p>
               <ol className="stops-list">{currentDirection.stops.map((stop, index) => {
                 const isExpanded = expandedStopIndex === index;
                 const arrival = stopArrivals[index];
@@ -1182,60 +1229,101 @@ export default function App() {
                   >
                     <span className="stop-index">{index + 1}</span>
                     <span className="stop-row-copy"><strong>{stop}</strong><small>{townForStop(stop)}</small></span>
-                    <span className="stop-row-next"><small>{preview && preview === arrival.shared ? "GPS" : "Horario"}</small><strong>{preview?.time ?? "—"}</strong></span>
+                    <span className="stop-row-next"><small>{preview && preview === arrival.shared ? t("GPS") : t("Horario")}</small><strong>{preview?.time ?? "—"}</strong></span>
                     <ChevronDown size={17} className={`stop-row-chevron${isExpanded ? " rotate" : ""}`} />
                   </button>
                   {isExpanded && <div className="stop-arrivals">
                     <div className="stop-estimate-row">
-                      <span>Próximo paso por horario</span>
+                      <span>{t("Próximo paso por horario")}</span>
                       {arrival.theoretical
-                        ? <strong>{arrival.theoretical.time}<small>en ~{arrival.theoretical.minutesUntil} min · días laborables</small></strong>
-                        : <strong>{ghostsToday ? "Sin más pasos hoy" : "Sin horario hoy"}<small>El horario publicado es de lunes a viernes</small></strong>}
+                        ? <strong>{arrival.theoretical.time}<small>{t("en ~")}{arrival.theoretical.minutesUntil} min · {t("días laborables")}</small></strong>
+                        : <strong>{t(ghostsToday ? "Sin más pasos hoy" : "Sin horario hoy")}<small>{t("El horario publicado es de lunes a viernes")}</small></strong>}
                     </div>
                     <div className="stop-estimate-row">
-                      <span>Llegada calculada</span>
+                      <span>{t("Llegada calculada")}</span>
                       {arrival.shared
-                        ? <strong>~{arrival.shared.time}<small>en ~{arrival.shared.minutesUntil} min · GPS y horario{arrival.shared.estimated ? " · posición proyectada" : ""}</small></strong>
-                        : <strong>Sin bus compartido próximo<small>Se calcula cuando hay una posición compartida en ruta</small></strong>}
+                        ? <strong>~{arrival.shared.time}<small>{t("en ~")}{arrival.shared.minutesUntil} min · {t("GPS y horario")}{arrival.shared.estimated ? ` · ${t("posición proyectada")}` : ""}</small></strong>
+                        : <strong>{t("Sin bus compartido próximo")}<small>{t("Se calcula cuando hay una posición compartida en ruta")}</small></strong>}
                     </div>
                     <div className="stop-passage-list">
-                      <div><strong>Pasos teóricos</strong><small>Horario de lunes a viernes</small></div>
+                      <div><strong>{t("Pasos teóricos")}</strong><small>{t("días laborables")}</small></div>
                       <div className="passage-times">{passageTimes.map((time, timeIndex) => <span className="passage-time" key={`${time}-${timeIndex}`}>{time}</span>)}</div>
                     </div>
                   </div>}
                 </li>;
               })}</ol>
-              <p className="map-footnote">Las ubicaciones exactas pueden variar; consulta la web de BusGarraf para confirmar la parada.</p>
+              <p className="map-footnote">{t("Las ubicaciones exactas pueden variar; consulta la web de BusGarraf para confirmar la parada.")}</p>
             </section>
+            <SiteFooter onShowAnnouncements={() => setAnnouncementOpen(true)} />
           </div>
         </section>
       </main>
 
-      <nav className="bottom-nav" aria-label="Secciones">
+      <nav className="bottom-nav" aria-label={t("Secciones")}>
         {NAV_ITEMS.map(({ page: target, label, Icon }) => (
           <a key={target} href={PAGE_PATHS[target]} className={`bottom-link ${page === target ? "active" : ""}`} aria-current={page === target ? "page" : undefined} onClick={(event) => {
             if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
             event.preventDefault();
             goToPage(target);
           }}>
-            <Icon size={18} /><span>{label}</span>
+            <Icon size={18} /><span>{t(label)}</span>
           </a>
         ))}
       </nav>
 
+      {menuOpen && <div className="menu-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setMenuOpen(false); }}>
+        <section className="app-menu" role="dialog" aria-modal="true" aria-labelledby="app-menu-title">
+          <header className="app-menu-header"><div><span className="section-kicker">MAPGARRAF</span><h2 id="app-menu-title">{t("Menú y ajustes")}</h2></div><button className="icon-button" onClick={() => setMenuOpen(false)} aria-label={t("Cerrar menú")}><X size={19} /></button></header>
+          <div className="app-menu-content">
+            <section className="menu-section">
+              <h3>{t("Preferencias")}</h3>
+              <div className="menu-setting"><span><strong>{t("Idioma")}</strong><small>{t("Elige el idioma de la aplicación")}</small></span><LanguagePicker /></div>
+              <div className="menu-setting"><span><strong>{t("Apariencia")}</strong><small>{t("Tema claro u oscuro")}</small></span><button className="menu-action" aria-pressed={theme === "dark"} onClick={toggleTheme}>{theme === "dark" ? <Sun size={17} /> : <Moon size={17} />}{t(theme === "dark" ? "Claro" : "Oscuro")}</button></div>
+            </section>
+            <section className="menu-section">
+              <h3>{t("Opciones del mapa")}</h3>
+              <div className="menu-setting"><span><strong>{t("Buses fantasma")}</strong><small>{t("Estimaciones según el horario, sin verificar por viajeros")}</small></span><button className={`menu-switch${showGhosts ? " is-on" : ""}`} role="switch" aria-checked={showGhosts} onClick={toggleGhosts}><span /></button></div>
+              <p className="menu-help">{t(ghostsToday ? "Los buses fantasma son estimaciones creadas con el horario y pueden no existir o ir con retraso." : "Hoy no se muestran estimaciones fantasma porque el horario disponible es de días laborables.")}</p>
+            </section>
+            <section className="menu-section">
+              <h3>{t("Aplicación e información")}</h3>
+              <div className="menu-action-list">
+                <button className="menu-list-action" onClick={() => void installApp()}><Download size={17} />{t("Instalar aplicación")}</button>
+                <button className="menu-list-action" onClick={() => { void fetchReports(); void fetchDelayReports(); }}><RefreshCw size={17} className={loadingReports ? "spin" : ""} />{t("Actualizar buses")}</button>
+                <button className="menu-list-action" type="button" data-cookie-settings>{t("Configurar cookies")}</button>
+                <button className="menu-list-action" onClick={() => { setMenuOpen(false); setAnnouncementOpen(true); }}><Bell size={17} />{t("Novedades")}</button>
+              </div>
+              <div className="menu-legal-links"><a href="/terms.html">{t("Condiciones de uso")}</a><a href="/privacy.html">{t("Política de privacidad")}</a><a href="/cookies.html">{t("Política de cookies")}</a></div>
+            </section>
+          </div>
+        </section>
+      </div>}
+
       {announcementOpen && <AnnouncementDialog onClose={() => setAnnouncementOpen(false)} />}
+
+      {pendingRoutePosition && <div className="dialog-backdrop route-diversion-backdrop" role="presentation">
+        <section className="install-dialog route-diversion-dialog" role="dialog" aria-modal="true" aria-labelledby="route-diversion-title" aria-describedby="route-diversion-copy">
+          <span className="install-dialog-icon route-diversion-icon"><AlertTriangle size={22} /></span>
+          <h2 id="route-diversion-title">{t("La ubicación queda fuera de la ruta")}</h2>
+          <p id="route-diversion-copy">{t("¿El bus ha cambiado el recorrido habitual por una incidencia, un corte o algún problema en la vía? Si confirmas, compartiremos la ubicación como desvío mientras esté a menos de 8 km de la ruta publicada.")}</p>
+          <div className="route-diversion-actions">
+            <button className="route-diversion-no" onClick={() => answerRouteDeviation(false)}>{t("No, mantener la ruta")}</button>
+            <button className="share-button route-diversion-yes" onClick={() => answerRouteDeviation(true)}>{t("Sí, va por otro camino")}</button>
+          </div>
+        </section>
+      </div>}
 
       {showInstallHelp && <div className="dialog-backdrop" role="presentation" onClick={() => setShowInstallHelp(false)}>
         <section className="install-dialog" role="dialog" aria-modal="true" aria-labelledby="install-title" onClick={(event) => event.stopPropagation()}>
-          <button className="dialog-close" onClick={() => setShowInstallHelp(false)} aria-label="Cerrar"><X size={18} /></button>
+          <button className="dialog-close" onClick={() => setShowInstallHelp(false)} aria-label={t("Cerrar")}><X size={18} /></button>
           <span className="install-dialog-icon"><Download size={22} /></span>
-          <h2 id="install-title">Lleva MapGarraf en el móvil</h2>
+          <h2 id="install-title">{t("Lleva MapGarraf en el móvil")}</h2>
           {/iphone|ipad|ipod/i.test(navigator.userAgent) ? (
-            <p>En Safari, toca <strong>Compartir</strong> y después <strong>Añadir a pantalla de inicio</strong>. Se abrirá como una app.</p>
+            <p>{t("En Safari, toca Compartir y después Añadir a pantalla de inicio. Se abrirá como una app.")}</p>
           ) : (
-            <p>En Chrome, abre el menú <strong>⋮</strong> y elige <strong>Instalar aplicación</strong> o <strong>Añadir a pantalla de inicio</strong>.</p>
+            <p>{t("En Chrome, abre el menú ⋮ y elige Instalar aplicación o Añadir a pantalla de inicio.")}</p>
           )}
-          <button className="share-button dialog-action" onClick={() => setShowInstallHelp(false)}>Entendido</button>
+          <button className="share-button dialog-action" onClick={() => setShowInstallHelp(false)}>{t("Entendido")}</button>
         </section>
       </div>}
     </div>
@@ -1244,14 +1332,15 @@ export default function App() {
 
 function AnnouncementDialog({ onClose }: { onClose: () => void }) {
   const announcement = ANNOUNCEMENTS[0];
+  const { language, t } = useLanguage();
   return <div className="dialog-backdrop" role="presentation" onClick={onClose}>
     <section className="install-dialog announcement-dialog" role="dialog" aria-modal="true" aria-labelledby="announcement-title" aria-describedby="announcement-body" onClick={(event) => event.stopPropagation()}>
-      <button className="dialog-close" onClick={onClose} aria-label="Cerrar anuncio"><X size={18} /></button>
+      <button className="dialog-close" onClick={onClose} aria-label={t("Cerrar anuncio")}><X size={18} /></button>
       <span className="install-dialog-icon"><Bell size={22} /></span>
-      <p className="announcement-kicker">NOVEDADES · <time dateTime={announcement.dateTime}>{announcement.date}</time></p>
-      <h2 id="announcement-title">{announcement.title}</h2>
-      <p id="announcement-body">{announcement.body}</p>
-      <button className="share-button dialog-action" onClick={onClose}>Entendido</button>
+      <p className="announcement-kicker">{t("NOVEDADES · ")}<time dateTime={announcement.dateTime}>{new Date(`${announcement.dateTime}T12:00:00Z`).toLocaleDateString(language, { dateStyle: "long", timeZone: "UTC" })}</time></p>
+      <h2 id="announcement-title">{t(announcement.title)}</h2>
+      <p id="announcement-body">{t(announcement.body)}</p>
+      <button className="share-button dialog-action" onClick={onClose}>{t("Entendido")}</button>
     </section>
   </div>;
 }
@@ -1271,33 +1360,36 @@ function loadShowGhosts() {
 }
 
 function GhostCard({ ghost, onClaim }: { ghost: GhostBus; onClaim: () => void }) {
+  const { t } = useLanguage();
   return <article className="report-card ghost-card">
     <span className="report-bus ghost-bus"><Ghost size={19} /></span>
     <div className="report-main">
-      <div className="report-title"><strong>Bus fantasma · salida {ghost.departureTime}</strong><span className="ghost-pill">SIN VERIFICAR</span></div>
-      <div className="report-meta"><span>Llegada prevista {ghost.arrivalTime}</span></div>
+      <div className="report-title"><strong>{t("Bus fantasma")} · {t("Salida").toLowerCase()} {ghost.departureTime}</strong><span className="ghost-pill">{t("SIN VERIFICAR")}</span></div>
+      <div className="report-meta"><span>{t("Llegada prevista")} {ghost.arrivalTime}</span></div>
       <p className="ghost-where">{ghost.departsInMinutes !== null
-        ? <>Según el horario, saldría de <strong>{ghost.previousStop}</strong> a las <strong>{ghost.departureTime}</strong> (en {ghost.departsInMinutes} min).</>
-        : <>Según el horario, ahora estaría entre <strong>{ghost.previousStop}</strong> y <strong>{ghost.nextStop}</strong>.</>}</p>
-      <p className="ghost-warning">Solo es una estimación: nadie ha confirmado que este bus circule ni dónde está. Puede no existir, ir con retraso o no haber salido.</p>
-      <button className="ghost-claim" onClick={onClaim}>Voy en este bus</button>
+        ? <>{t("Según el horario, saldría de")} <strong>{ghost.previousStop}</strong> {t("a las")} <strong>{ghost.departureTime}</strong> ({t("en")} {ghost.departsInMinutes} min).</>
+        : <>{t("Según el horario, ahora estaría entre")} <strong>{ghost.previousStop}</strong> {t("y")} <strong>{ghost.nextStop}</strong>.</>}</p>
+      <p className="ghost-warning">{t("Solo es una estimación: nadie ha confirmado que este bus circule ni dónde está. Puede no existir, ir con retraso o no haber salido.")}</p>
+      <button className="ghost-claim" onClick={onClaim}>{t("Voy en este bus")}</button>
     </div>
   </article>;
 }
 
 function ReportCard({ report, own }: { report: MapReport; own: boolean }) {
+  const { t } = useLanguage();
   const crowd = report.occupancy === "low" ? "Hay sitio" : report.occupancy === "medium" ? "Ocupación normal" : report.occupancy === "high" ? "Lleno" : null;
   const status = getReportStatus(report.delayMinutes, report.delayBasis);
   const minutes = Math.floor(report.ageSeconds / 60);
-  const age = report.ageSeconds < 60 ? "ahora" : `hace ${minutes} min`;
+  const age = report.ageSeconds < 60 ? t("ahora") : `${t("hace")} ${minutes} min`;
   return <article className={`report-card${report.estimated ? " report-card--estimated" : ""}`}>
     <span className="report-bus"><BusGarrafIcon size={37} /></span>
-    <div className="report-main"><div className="report-title"><strong>{report.reinforcement ? "Bus de refuerzo" : "Bus en ruta"}{report.supportCount > 1 ? ` · ${report.supportCount} avisos` : ""}</strong>{own && <span className="mine-pill">TU SEÑAL</span>}{report.estimated && <span className="estimate-pill">POSICIÓN ESTIMADA</span>}</div>
-      {report.estimated && <p className="estimate-note">Última posición real hace {minutes} min{report.previousStop && report.nextStop ? <>; según el horario, ahora estaría entre <strong>{report.previousStop}</strong> y <strong>{report.nextStop}</strong></> : ""}. Es una estimación: puede no ser exacta.</p>}
-      <div className="report-meta">{report.estimated ? null : <span><span className="fresh-dot" />{age}</span>}{report.departureTime && <span>Salida {report.departureTime}</span>}{report.accuracy !== null && <span>GPS ±{Math.round(report.accuracy)} m</span>}</div>
-      {report.nextStop && <div className="report-next-stop"><Navigation size={13} /><span>Próxima: <strong>{report.nextStop}</strong></span>{report.minutesToNextStop !== null && report.minutesToNextStop !== undefined && <span className="report-eta">~{report.minutesToNextStop} min</span>}</div>}
-      <div className={`report-timing report-timing--${status.kind}`}><span className="report-timing-dot" /><strong>{status.label}</strong><span className="report-timing-explanation">{status.explanation}</span></div>
-      {(crowd || report.reinforcement) && <div className="report-tags">{report.reinforcement && <span className="report-tag--reinforcement"><BusFront size={12} />Bus de refuerzo</span>}{crowd && <span><Users size={12} />{crowd}</span>}</div>}
+    <div className="report-main"><div className="report-title"><strong>{t(report.reinforcement ? "Bus de refuerzo" : "Bus en ruta")}{report.supportCount > 1 ? ` · ${report.supportCount} ${t("avisos")}` : ""}</strong>{own && <span className="mine-pill">{t("TU SEÑAL")}</span>}{report.estimated && <span className="estimate-pill">{t("POSICIÓN ESTIMADA")}</span>}</div>
+      {report.estimated && <p className="estimate-note">{t("Última posición real hace")} {minutes} min{report.previousStop && report.nextStop ? <>; {t("Según el horario, ahora estaría entre")} <strong>{report.previousStop}</strong> {t("y")} <strong>{report.nextStop}</strong></> : ""}. {t("Es una estimación: puede no ser exacta.")}</p>}
+      <div className="report-meta">{report.estimated ? null : <span><span className="fresh-dot" />{age}</span>}{report.departureTime && <span>{t("Salida")} {report.departureTime}</span>}{report.accuracy !== null && <span>{t("GPS")} ±{Math.round(report.accuracy)} m</span>}</div>
+      {report.deviationMeters !== null && report.deviationMeters !== undefined && <div className="report-deviation"><AlertTriangle size={15} /><strong>{t(report.estimated ? "Desvío en última señal" : "Posible desvío")}</strong><span>~{Math.round(report.deviationMeters)} m {t("del recorrido")}</span></div>}
+      {report.nextStop && <div className="report-next-stop"><Navigation size={13} /><span>{t("Próxima:")} <strong>{report.nextStop}</strong></span>{report.minutesToNextStop !== null && report.minutesToNextStop !== undefined && <span className="report-eta">~{report.minutesToNextStop} min</span>}</div>}
+      <div className={`report-timing report-timing--${status.kind}`}><span className="report-timing-dot" /><strong>{t(status.label)}</strong><span className="report-timing-explanation">{t(status.explanation)}</span></div>
+      {(crowd || report.reinforcement) && <div className="report-tags">{report.reinforcement && <span className="report-tag--reinforcement"><BusFront size={12} />{t("Bus de refuerzo")}</span>}{crowd && <span><Users size={12} />{t(crowd)}</span>}</div>}
     </div>
   </article>;
 }
@@ -1354,10 +1446,11 @@ function aggregateReports(reports: BusReport[], ownId: string | null, direction:
   });
 }
 
-async function responseError(response: Response): Promise<ApiError> {
-  const result = await response.json().catch(() => null) as { error?: string } | null;
-  const error = new Error(result?.error || `Error de conexión (${response.status}).`) as ApiError;
+async function responseError(response: Response, t: (text: string) => string): Promise<ApiError> {
+  const result = await response.json().catch(() => null) as { error?: string; code?: string } | null;
+  const error = new Error(t(result?.error || `Error de conexión (${response.status}).`)) as ApiError;
   error.status = response.status;
+  error.code = result?.code;
   return error;
 }
 
