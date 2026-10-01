@@ -11,6 +11,7 @@ import {
   Download,
   Ghost,
   ExternalLink,
+  Flag,
   ListOrdered,
   LocateFixed,
   Maximize2,
@@ -41,13 +42,21 @@ import { LanguagePicker, useLanguage } from "./i18n";
 import { hasConflictingDepartures } from "../shared/reportIdentity.mjs";
 import { distanceFromRouteMeters, isPossibleRouteDeviation } from "./routeDeviation";
 
+declare global {
+  interface Window { MapGarrafAnalytics?: { pageView: (path: string) => void } }
+}
+
 type Occupancy = "low" | "medium" | "high" | null;
 type ShareSession = { id: string; token: string; deleteToken: string };
 type Draft = { departureTime: string; occupancy: Occupancy; reinforcement: boolean };
 type MapReport = BusReport & { supportCount: number; containsOwn: boolean };
 type DelayStage = "not-arrived" | "in-route";
-type DelayReport = { id: string; direction: Direction; departureTime: string; delayMinutes: number | null; stage: DelayStage; createdAt: string };
-type DelaySummary = { departureTime: string; stage: DelayStage; delayMinutes: number | null; count: number; createdAt: string };
+type DelayReport = { id: string; direction: Direction; departureTime: string; delayMinutes: number | null; stage: DelayStage; createdAt: string; communityFlagCount?: number };
+type DelaySummary = { latestId: string; communityFlagCount: number; departureTime: string; stage: DelayStage; delayMinutes: number | null; count: number; createdAt: string };
+type ShareHistoryPoint = { latitude: number; longitude: number; recordedAt: string };
+type ShareHistorySession = { reportId: string; departureTime: string | null; firstSeen: string; lastSeen: string; communityFlagCount: number; points: ShareHistoryPoint[] };
+type FlagTarget = { targetType: "vehicle" | "delay"; targetId: string; title: string };
+type FlagReason = "inaccurate" | "not-real" | "outdated" | "other";
 
 // The server flags a position as live for 1 minute; older ones are only served so the map can estimate.
 const LIVE_REPORT_SECONDS = 60;
@@ -230,6 +239,13 @@ export default function App() {
   const [delayOpen, setDelayOpen] = useState(false);
   const [delaySubmitting, setDelaySubmitting] = useState(false);
   const [delayNotice, setDelayNotice] = useState("");
+  const [shareHistory, setShareHistory] = useState<ShareHistorySession[]>([]);
+  const [shareHistoryOpen, setShareHistoryOpen] = useState(false);
+  const [shareHistoryLoading, setShareHistoryLoading] = useState(false);
+  const [shareHistoryLoadedDirection, setShareHistoryLoadedDirection] = useState<Direction | null>(null);
+  const [flagTarget, setFlagTarget] = useState<FlagTarget | null>(null);
+  const [flagReason, setFlagReason] = useState<FlagReason>("inaccurate");
+  const [flagSubmitting, setFlagSubmitting] = useState(false);
   const [reportsLoaded, setReportsLoaded] = useState(false);
   const [reportsFetchSucceeded, setReportsFetchSucceeded] = useState(false);
   const [announcementOpen, setAnnouncementOpen] = useState(false);
@@ -261,6 +277,7 @@ export default function App() {
   const [showGhosts, setShowGhosts] = useState(loadShowGhosts);
 
   const mapExpandButtonRef = useRef<HTMLButtonElement>(null);
+  const adminTitleClicksRef = useRef({ count: 0, lastClickAt: 0 });
   const mapCloseButtonRef = useRef<HTMLButtonElement>(null);
   const restoredCurrentBusRef = useRef<string | null>(null);
   const autoShareAttemptedRef = useRef<string | null>(null);
@@ -383,6 +400,10 @@ export default function App() {
     window.addEventListener("resize", snapToPage);
     return () => window.removeEventListener("resize", snapToPage);
   }, []);
+
+  useEffect(() => {
+    window.MapGarrafAnalytics?.pageView(routePath);
+  }, [routePath]);
 
   useEffect(() => {
     const restoreLocation = () => {
@@ -584,9 +605,49 @@ export default function App() {
     }
     return [...groups.values()].map((items): DelaySummary => {
       const sorted = items.map((item) => item.delayMinutes).filter((minutes): minutes is number => minutes !== null).sort((a, b) => a - b);
-      return { departureTime: items[0].departureTime, stage: items[0].stage, delayMinutes: sorted.length ? sorted[Math.floor(sorted.length / 2)] : null, count: items.length, createdAt: items.map((item) => item.createdAt).sort().at(-1)! };
+      const latest = [...items].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt))[0];
+      return { latestId: latest.id, communityFlagCount: latest.communityFlagCount ?? 0, departureTime: items[0].departureTime, stage: items[0].stage, delayMinutes: sorted.length ? sorted[Math.floor(sorted.length / 2)] : null, count: items.length, createdAt: latest.createdAt };
     }).sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt)).slice(0, 6);
   }, [delayReports, direction, now]);
+
+  async function loadShareHistory() {
+    setShareHistoryLoading(true);
+    try {
+      const response = await fetch(`/api/share-history?direction=${encodeURIComponent(direction)}`, { headers: { Accept: "application/json" } });
+      if (!response.ok) throw new Error("No se pudo cargar el historial.");
+      const data = await response.json() as { sessions: ShareHistorySession[] };
+      setShareHistory(data.sessions);
+      setShareHistoryLoadedDirection(direction);
+    } catch { setNotice(t("No se pudo cargar el historial. Revisa la conexión.")); }
+    finally { setShareHistoryLoading(false); }
+  }
+
+  useEffect(() => {
+    if (!shareHistoryOpen) return;
+    setShareHistoryLoadedDirection(null);
+    void loadShareHistory();
+  }, [direction]);
+
+  async function submitFlag() {
+    if (!flagTarget) return;
+    setFlagSubmitting(true);
+    try {
+      const response = await fetch("/api/flags", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ targetType: flagTarget.targetType, targetId: flagTarget.targetId, reason: flagReason }),
+      });
+      if (!response.ok) throw await responseError(response, t);
+      const data = await response.json() as { communityFlagCount: number };
+      if (flagTarget.targetType === "vehicle") {
+        setReports((items) => items.map((item) => item.id === flagTarget.targetId ? { ...item, communityFlagCount: data.communityFlagCount } : item));
+        setShareHistory((items) => items.map((item) => item.reportId === flagTarget.targetId ? { ...item, communityFlagCount: data.communityFlagCount } : item));
+      } else setDelayReports((items) => items.map((item) => item.id === flagTarget.targetId ? { ...item, communityFlagCount: data.communityFlagCount } : item));
+      setFlagTarget(null);
+      setNotice(t("Gracias. El aviso queda marcado para revisión de la comunidad."));
+    } catch (error) { setNotice(t(error instanceof Error ? error.message : "No se pudo enviar el reporte.")); }
+    finally { setFlagSubmitting(false); }
+  }
 
   async function submitDelayReport(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -915,6 +976,19 @@ export default function App() {
     setMapExpanded(true);
   }
 
+  function handleAdminTitleClick() {
+    const stamp = Date.now();
+    const state = adminTitleClicksRef.current;
+    if (stamp - state.lastClickAt > 4_000) state.count = 0;
+    state.count += 1;
+    state.lastClickAt = stamp;
+    if (state.count >= 7) {
+      state.count = 0;
+      try { window.sessionStorage.setItem("mapgarraf-admin-login-open", "1"); } catch { /* The admin route remains directly available to an authenticated session. */ }
+      window.location.assign("/admin");
+    }
+  }
+
   const directionCard = (
     <section className="direction-card" aria-label={t("Selecciona el sentido del viaje")}>
     <div className="section-kicker"><ArrowDownUp size={15} /> {t("¿Hacia dónde vas?")}</div>
@@ -1074,14 +1148,15 @@ export default function App() {
             {delaySummaries.filter((item) => item.departureTime === draft.departureTime).length > 0 && <div className="delay-feed" aria-label={t("Avisos recientes de retraso para esta salida")}>
               <strong className="delay-feed-title">{t("Avisos recientes · últimas 2 h")}</strong>
               {delaySummaries.filter((item) => item.departureTime === draft.departureTime).map((item) => <div className="delay-feed-item" key={`${item.departureTime}:${item.stage}`}>
-                <span><small>{t(item.stage === "not-arrived" ? "Aún no había llegado a la primera parada" : "Reportado en ruta")} · {t("hace")} {Math.max(0, Math.floor((now.getTime() - Date.parse(item.createdAt)) / 60_000))} min</small></span>
+                <span><small>{t(item.stage === "not-arrived" ? "Aún no había llegado a la primera parada" : "Reportado en ruta")} · {t("hace")} {Math.max(0, Math.floor((now.getTime() - Date.parse(item.createdAt)) / 60_000))} min{item.communityFlagCount ? ` · ${t("marcado como dudoso")} (${item.communityFlagCount})` : ""}</small></span>
                 <strong>{item.delayMinutes === null ? t("Indefinido") : `≈ ${item.delayMinutes} min`}{item.count > 1 ? ` · ${item.count} ${t("avisos")}` : ""}</strong>
+                <button className="flag-button flag-button--compact" type="button" aria-label={t("Reportar aviso de retraso como dudoso")} onClick={() => { setFlagReason("inaccurate"); setFlagTarget({ targetType: "delay", targetId: item.latestId, title: `${item.departureTime} · ${item.delayMinutes === null ? t("Indefinido") : `≈ ${item.delayMinutes} min`}` }); }}><Flag size={13} />{item.communityFlagCount ? ` ${item.communityFlagCount}` : ""}</button>
               </div>)}
             </div>}
           </div>
           <details className="privacy-details">
             <summary>{t("Privacidad y seguridad")}</summary>
-            <p>{t("Solo enviamos ubicación tras pulsar compartir y aceptar el permiso del navegador. El GPS exacto es público mientras se actualiza y durante un minuto desde la última lectura; después, deja de considerarse una posición real y se estima con el horario, con coordenadas redondeadas a unos 100 m, hasta la llegada prevista (máximo 105 min desde la última lectura). Si vuelves a abrir la web durante ese trayecto, intentará reanudar la ubicación si ya habías iniciado la compartición y el navegador conserva el permiso. La señal se borra del servidor en un máximo de 24 h; pulsar «Dejar de compartir» solicita su borrado inmediato y, si no hay conexión, se volverá a intentar al recuperarla mientras esta pestaña siga abierta. No se crea una cuenta ni guardamos un historial de trayectos. El mapa solicita imágenes de OpenStreetMap, pero no le enviamos tu GPS. Úsalo como pasajero, nunca mientras conduces.")}</p>
+            <p>{t("Solo enviamos ubicación tras pulsar compartir y aceptar el permiso del navegador. El GPS exacto es público mientras se actualiza y durante un minuto desde la última lectura; después, deja de considerarse una posición real y se estima con el horario, con coordenadas redondeadas a unos 100 m, hasta la llegada prevista (máximo 105 min desde la última lectura). Si vuelves a abrir la web durante ese trayecto, intentará reanudar la ubicación si ya habías iniciado la compartición y el navegador conserva el permiso. La señal se borra del servidor en un máximo de 24 h; pulsar «Dejar de compartir» solicita su borrado inmediato y, si no hay conexión, se volverá a intentar al recuperarla mientras esta pestaña siga abierta. Se conserva un historial aproximado de cada compartición, redondeado a unos 100 m, durante un máximo de 24 h. No se crea una cuenta. El mapa solicita imágenes de OpenStreetMap, pero no le enviamos tu GPS. Úsalo como pasajero, nunca mientras conduces.")}</p>
           </details>
           <button className="options-toggle" aria-expanded={showOptions} onClick={() => setShowOptions((value) => !value)}>
             {t(showOptions ? "Ocultar opciones" : "Añadir detalles útiles (opcional)")}<ChevronDown size={15} className={showOptions ? "rotate" : ""} />
@@ -1185,11 +1260,29 @@ export default function App() {
           </div>
           {activeReports.length ? (
             <div className="report-list">
-              {activeReports.map((report) => <ReportCard key={report.id} report={report} own={report.containsOwn} />)}
+              {activeReports.map((report) => <ReportCard key={report.id} report={report} own={report.containsOwn} onFlag={() => { setFlagReason("inaccurate"); setFlagTarget({ targetType: "vehicle", targetId: report.id, title: `${report.reinforcement ? t("Bus de refuerzo") : t("Bus en ruta")}${report.departureTime ? ` · ${report.departureTime}` : ""}` }); }} />)}
             </div>
           ) : (
             <div className="empty-state"><span className="empty-icon"><BusGarrafIcon size={39} /></span><div><strong>{t("Sé la primera señal")}</strong><p>{t("Si ya estás a bordo, comparte la ubicación del bus para ayudar a quienes esperan.")}</p></div></div>
           )}
+          <section className="history-panel">
+            <button className="history-toggle" type="button" aria-expanded={shareHistoryOpen} onClick={() => {
+              const opening = !shareHistoryOpen;
+              setShareHistoryOpen(opening);
+              if (opening && shareHistoryLoadedDirection !== direction) void loadShareHistory();
+            }}><span><strong>{t("Historial de comparticiones")}</strong><small>{t("Ubicaciones aproximadas · últimas 24 h")}</small></span><ChevronDown size={17} className={shareHistoryOpen ? "rotate" : ""} /></button>
+            {shareHistoryOpen && <div className="history-content">
+              {shareHistoryLoading ? <p>{t("Cargando historial…")}</p> : shareHistory.length === 0 ? <p>{t("Aún no hay comparticiones recientes en este sentido.")}</p> : shareHistory.map((session) => <details className="history-session" key={session.reportId}>
+                <summary><span>{t("Salida")} {session.departureTime || t("sin indicar")} · {session.points.length} {t("puntos aproximados")}</span><small>{new Date(session.firstSeen).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}–{new Date(session.lastSeen).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</small></summary>
+                {session.communityFlagCount > 0 && <p className="flag-count-note">{t("Marcado como dudoso por la comunidad")} · {session.communityFlagCount}</p>}
+                <ol>{session.points.map((point, index) => {
+                  const closest = stops.map((stop) => ({ stop, distance: distanceMeters(point.latitude, point.longitude, stop.coordinates[direction].lat, stop.coordinates[direction].lng) })).sort((a, b) => a.distance - b.distance)[0];
+                  return <li key={`${session.reportId}-${point.recordedAt}-${index}`}><time>{new Date(point.recordedAt).toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}</time><span>{t("Cerca de")} {closest?.stop.name ?? t("la ruta")}</span></li>;
+                })}</ol>
+                <button className="flag-button" type="button" onClick={() => { setFlagReason("inaccurate"); setFlagTarget({ targetType: "vehicle", targetId: session.reportId, title: `${t("Compartición")} · ${session.departureTime || ""}` }); }}><Flag size={13} />{t("Reportar compartición")}</button>
+              </details>)}
+            </div>}
+          </section>
           {ghosts.length > 0 && (
             <div className="ghost-block">
               <div className="ghost-block-title"><Ghost size={15} /> {t("BUSES FANTASMA · SIN VERIFICAR")}</div>
@@ -1208,7 +1301,7 @@ export default function App() {
 
         <section className="page" id="page-stops" aria-label={t("Paradas")} inert={page !== STOPS_PAGE}>
           <div className="main-content">
-            <div className="page-heading"><div className="eyebrow"><span className="eyebrow-dot" />{t("RECORRIDO COMPLETO")}</div>{page === STOPS_PAGE ? <h1>{t("Paradas del BusGarraf")}</h1> : <h2>{t("Paradas del BusGarraf")}</h2>}</div>
+            <div className="page-heading"><div className="eyebrow"><span className="eyebrow-dot" />{t("RECORRIDO COMPLETO")}</div>{page === STOPS_PAGE ? <h1 onClick={handleAdminTitleClick}>{t("Paradas del BusGarraf")}</h1> : <h2 onClick={handleAdminTitleClick}>{t("Paradas del BusGarraf")}</h2>}</div>
             {directionCard}
             <section className="detail-panel stops-panel">
               <div className="detail-title"><div><h3>{t("16 paradas")}</h3></div><MapPin size={19} /></div>
@@ -1301,11 +1394,21 @@ export default function App() {
 
       {announcementOpen && <AnnouncementDialog onClose={() => setAnnouncementOpen(false)} />}
 
+      {flagTarget && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !flagSubmitting) setFlagTarget(null); }}>
+        <section className="install-dialog flag-dialog" role="dialog" aria-modal="true" aria-labelledby="flag-dialog-title">
+          <button className="dialog-close" type="button" onClick={() => setFlagTarget(null)} aria-label={t("Cerrar")}><X size={18} /></button>
+          <span className="install-dialog-icon"><Flag size={21} /></span><h2 id="flag-dialog-title">{t("Reportar información dudosa")}</h2><p>{flagTarget.title}</p>
+          <label className="flag-reason-label">{t("¿Qué no parece correcto?")}<select value={flagReason} onChange={(event) => setFlagReason(event.target.value as FlagReason)}><option value="inaccurate">{t("La ubicación o el retraso no coincide")}</option><option value="not-real">{t("Creo que este bus o aviso no es real")}</option><option value="outdated">{t("La información está desactualizada")}</option><option value="other">{t("Otro motivo")}</option></select></label>
+          <p className="flag-dialog-note">{t("El reporte se mostrará como dudoso para la comunidad. No se elimina automáticamente.")}</p>
+          <div className="route-diversion-actions"><button className="route-diversion-no" type="button" disabled={flagSubmitting} onClick={() => setFlagTarget(null)}>{t("Cancelar")}</button><button className="share-button" type="button" disabled={flagSubmitting} onClick={() => void submitFlag()}>{flagSubmitting ? t("Enviando…") : t("Enviar reporte")}</button></div>
+        </section>
+      </div>}
+
       {pendingRoutePosition && <div className="dialog-backdrop route-diversion-backdrop" role="presentation">
         <section className="install-dialog route-diversion-dialog" role="dialog" aria-modal="true" aria-labelledby="route-diversion-title" aria-describedby="route-diversion-copy">
           <span className="install-dialog-icon route-diversion-icon"><AlertTriangle size={22} /></span>
           <h2 id="route-diversion-title">{t("La ubicación queda fuera de la ruta")}</h2>
-          <p id="route-diversion-copy">{t("¿El bus ha cambiado el recorrido habitual por una incidencia, un corte o algún problema en la vía? Si confirmas, compartiremos la ubicación como desvío mientras esté a menos de 8 km de la ruta publicada.")}</p>
+          <p id="route-diversion-copy">{t("¿El bus ha cambiado el recorrido habitual por una incidencia, un corte o algún problema en la vía? Si confirmas, compartiremos la ubicación como desvío mientras esté a un máximo de 50 km de la ruta publicada.")}</p>
           <div className="route-diversion-actions">
             <button className="route-diversion-no" onClick={() => answerRouteDeviation(false)}>{t("No, mantener la ruta")}</button>
             <button className="share-button route-diversion-yes" onClick={() => answerRouteDeviation(true)}>{t("Sí, va por otro camino")}</button>
@@ -1375,7 +1478,7 @@ function GhostCard({ ghost, onClaim }: { ghost: GhostBus; onClaim: () => void })
   </article>;
 }
 
-function ReportCard({ report, own }: { report: MapReport; own: boolean }) {
+function ReportCard({ report, own, onFlag }: { report: MapReport; own: boolean; onFlag: () => void }) {
   const { t } = useLanguage();
   const crowd = report.occupancy === "low" ? "Hay sitio" : report.occupancy === "medium" ? "Ocupación normal" : report.occupancy === "high" ? "Lleno" : null;
   const status = getReportStatus(report.delayMinutes, report.delayBasis);
@@ -1390,6 +1493,8 @@ function ReportCard({ report, own }: { report: MapReport; own: boolean }) {
       {report.nextStop && <div className="report-next-stop"><Navigation size={13} /><span>{t("Próxima:")} <strong>{report.nextStop}</strong></span>{report.minutesToNextStop !== null && report.minutesToNextStop !== undefined && <span className="report-eta">~{report.minutesToNextStop} min</span>}</div>}
       <div className={`report-timing report-timing--${status.kind}`}><span className="report-timing-dot" /><strong>{t(status.label)}</strong><span className="report-timing-explanation">{t(status.explanation)}</span></div>
       {(crowd || report.reinforcement) && <div className="report-tags">{report.reinforcement && <span className="report-tag--reinforcement"><BusFront size={12} />{t("Bus de refuerzo")}</span>}{crowd && <span><Users size={12} />{t(crowd)}</span>}</div>}
+      {report.communityFlagCount ? <p className="flag-count-note">{t("Marcado como dudoso por la comunidad")} · {report.communityFlagCount}</p> : null}
+      <button className="flag-button" type="button" onClick={onFlag}><Flag size={13} />{t("Reportar ubicación")}</button>
     </div>
   </article>;
 }

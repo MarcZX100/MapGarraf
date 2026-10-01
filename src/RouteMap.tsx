@@ -6,6 +6,7 @@ import { roadShapeByDirection } from "./routeShapes";
 import { getReportStatus } from "./reportStatus";
 import { getNextSharedArrival, getNextTheoreticalArrival, getTheoreticalPassageTimes } from "./stopArrivals";
 import { type Language, translate } from "./i18n";
+import { nearestRoutePoint } from "./routeDeviation";
 
 export type BusReport = {
   id: string;
@@ -22,6 +23,7 @@ export type BusReport = {
   lastSeen: string;
   ageSeconds: number;
   supportCount?: number;
+  communityFlagCount?: number;
   /** Client-side: when the report was fetched, to keep its age current between refreshes. */
   receivedAt?: number;
   /** The position is a timetable-based estimate from an older real reading, not a live GPS fix. */
@@ -51,6 +53,8 @@ export default function RouteMap({ language, direction, stops, timetable, report
   const mapRef = useRef<L.Map | null>(null);
   const routeLayersRef = useRef<L.LayerGroup | null>(null);
   const reportLayersRef = useRef<L.LayerGroup | null>(null);
+  const diversionLayersRef = useRef<L.LayerGroup | null>(null);
+  const diversionRoutesRef = useRef(new Map<string, { line: L.Polyline | null; target: L.CircleMarker | null; origin: L.LatLng; controller: AbortController | null }>());
   const ghostLayersRef = useRef<L.LayerGroup | null>(null);
   const ghostMarkersRef = useRef(new Map<string, L.Marker>());
   const reportMarkersRef = useRef(new Map<string, { marker: L.Marker; circle: L.Circle | null }>());
@@ -77,6 +81,7 @@ export default function RouteMap({ language, direction, stops, timetable, report
     routeLayersRef.current = L.layerGroup().addTo(map);
     ghostLayersRef.current = L.layerGroup().addTo(map);
     reportLayersRef.current = L.layerGroup().addTo(map);
+    diversionLayersRef.current = L.layerGroup().addTo(map);
     map.setView([41.18, 1.48], 9);
     // Dragging stops following the bus; changing zoom keeps the follow active.
     // Moves the app makes itself are flagged so they are not mistaken for the user.
@@ -92,9 +97,12 @@ export default function RouteMap({ language, direction, stops, timetable, report
       mapRef.current = null;
       routeLayersRef.current = null;
       reportLayersRef.current = null;
+      diversionLayersRef.current = null;
       ghostLayersRef.current = null;
       ghostMarkersRef.current.clear();
       reportMarkersRef.current.clear();
+      for (const entry of diversionRoutesRef.current.values()) entry.controller?.abort();
+      diversionRoutesRef.current.clear();
     };
   }, []);
 
@@ -182,6 +190,53 @@ export default function RouteMap({ language, direction, stops, timetable, report
       markers.set(report.id, { marker, circle });
     }
   }, [reports, language]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const layers = diversionLayersRef.current;
+    if (!map || !layers) return;
+    const routeCache = diversionRoutesRef.current;
+    const active = reports.filter((report) => report.deviationMeters !== null && report.deviationMeters !== undefined);
+    const activeIds = new Set(active.map((report) => report.id));
+    for (const [id, entry] of routeCache) {
+      if (!activeIds.has(id)) {
+        entry.controller?.abort();
+        if (entry.line) layers.removeLayer(entry.line);
+        if (entry.target) layers.removeLayer(entry.target);
+        routeCache.delete(id);
+      }
+    }
+    for (const report of active) {
+      const origin = L.latLng(report.latitude, report.longitude);
+      const cached = routeCache.get(report.id);
+      // Position reports refresh periodically. Avoid repeatedly querying OSRM unless
+      // the bus has moved enough for the return route to have materially changed.
+      if (cached && cached.origin.distanceTo(origin) < 250) continue;
+      cached?.controller?.abort();
+      if (cached?.line) layers.removeLayer(cached.line);
+      if (cached?.target) layers.removeLayer(cached.target);
+      const destination = nearestRoutePoint(report.latitude, report.longitude, direction);
+      if (!destination) continue;
+      const controller = new AbortController();
+      const entry: { line: L.Polyline | null; target: L.CircleMarker | null; origin: L.LatLng; controller: AbortController | null } = { line: null, target: null, origin, controller };
+      routeCache.set(report.id, entry);
+      const coordinates = `${origin.lng},${origin.lat};${destination.longitude},${destination.latitude}`;
+      void fetch(`https://router.project-osrm.org/route/v1/driving/${coordinates}?overview=full&geometries=geojson`, { signal: controller.signal })
+        .then((response) => response.ok ? response.json() : null)
+        .then((data: { code?: string; routes?: Array<{ geometry?: { coordinates?: [number, number][] } }> } | null) => {
+          if (!data || data.code !== "Ok" || !data.routes?.[0]?.geometry?.coordinates?.length || routeCache.get(report.id) !== entry) return;
+          const points = data.routes[0].geometry.coordinates.map(([lng, lat]) => L.latLng(lat, lng));
+          entry.line = L.polyline(points, { color: "#ff9f43", weight: 5, opacity: 0.9, dashArray: "10 9", lineCap: "round", lineJoin: "round" })
+            .bindTooltip(translate(language, "Ruta orientativa para volver al recorrido"), { sticky: true })
+            .addTo(layers);
+          entry.target = L.circleMarker([destination.latitude, destination.longitude], { radius: 7, color: "#ffffff", weight: 2, fillColor: "#ff9f43", fillOpacity: 1 })
+            .bindTooltip(translate(language, "Punto para reincorporarse al recorrido"))
+            .addTo(layers);
+        })
+        .catch(() => { /* If routing is unavailable, keep the bus visible without a suggested line. */ })
+        .finally(() => { if (routeCache.get(report.id) === entry) entry.controller = null; });
+    }
+  }, [direction, reports, language]);
 
   useEffect(() => {
     const map = mapRef.current;
@@ -274,7 +329,7 @@ function reportPopupHtml(report: BusReport, language: Language) {
   const departure = report.departureTime ? ` · ${translate(language, "Salida").toLowerCase()} ${escapeHtml(report.departureTime)}` : "";
   const nextStop = report.nextStop ? `<br>${translate(language, "Próxima parada:")} ${escapeHtml(report.nextStop)}${report.minutesToNextStop !== null && report.minutesToNextStop !== undefined ? ` · ~${report.minutesToNextStop} min` : ""}.` : "";
   const deviation = report.deviationMeters !== null && report.deviationMeters !== undefined
-    ? `<br><span class="popup-deviation">⚠ ${translate(language, report.estimated ? "Desvío en última señal" : "Posible desvío")} · ~${Math.round(report.deviationMeters)} m ${translate(language, "del recorrido")}</span>`
+    ? `<br><span class="popup-deviation">⚠ ${translate(language, report.estimated ? "Desvío en última señal" : "Posible desvío")} · ~${Math.round(report.deviationMeters)} m ${translate(language, "del recorrido")}</span><br><small>${translate(language, "Línea discontinua: ruta orientativa para volver al recorrido.")}</small>`
     : "";
   if (report.estimated) {
     const between = report.previousStop && report.nextStop ? `<br>${translate(language, "Según el horario, ahora estaría entre")} ${escapeHtml(report.previousStop)} ${translate(language, "y")} ${escapeHtml(report.nextStop)}.` : "";

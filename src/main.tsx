@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import AdminPage from "./AdminPage";
 import { LanguageProvider } from "./i18n";
 import "leaflet/dist/leaflet.css";
 import "./styles.css";
@@ -13,6 +14,6 @@ if (import.meta.env.PROD && "serviceWorker" in navigator) {
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
-    <LanguageProvider><App /></LanguageProvider>
+    <LanguageProvider>{window.location.pathname.replace(/\/+$/, "") === "/admin" ? <AdminPage /> : <App />}</LanguageProvider>
   </React.StrictMode>,
 );
