@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, ArrowLeft, Check, Copy, KeyRound, LogOut, RefreshCw, Shield, Trash2 } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { Activity, AlertTriangle, ArrowLeft, BarChart3, Check, Clock3, Copy, Flag, KeyRound, LayoutDashboard, LogOut, RefreshCw, Search, Shield, Trash2, Users } from "lucide-react";
 import BusGarrafIcon from "./BusGarrafIcon";
 import { useLanguage } from "./i18n";
 
@@ -52,6 +52,7 @@ type AdminFlag = {
   target: FlagTargetData;
 };
 type AuditEntry = { action: string; targetType: string; targetId: string; createdAt: string };
+type AdminSection = "overview" | "audience" | "moderation" | "team" | "account";
 
 async function readError(response: Response) {
   const data = await response.json().catch(() => null) as { error?: string } | null;
@@ -86,6 +87,10 @@ export default function AdminPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const [message, setMessage] = useState("");
+  const [activeSection, setActiveSection] = useState<AdminSection>("overview");
+  const [flagSearch, setFlagSearch] = useState("");
+  const [flagTypeFilter, setFlagTypeFilter] = useState<"all" | "vehicle" | "delay">("all");
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<number | null>(null);
 
   const loadDashboard = useCallback(async () => {
     setLoading(true);
@@ -115,6 +120,7 @@ export default function AdminPage() {
       setAudit(dashboard.audit);
       setFlags(moderation.flags);
       if (usersResponse?.ok) setAdminUsers((await usersResponse.json() as { users: AdminUser[] }).users);
+      setLastUpdatedAt(Date.now());
     } catch (loadError) {
       setError(loadError instanceof Error ? loadError.message : t("No se pudo cargar el panel."));
     } finally { setLoading(false); }
@@ -123,17 +129,10 @@ export default function AdminPage() {
   useEffect(() => { void loadDashboard(); }, [loadDashboard]);
 
   useEffect(() => {
-    if (!user || user.role === "moderator") return;
-    let active = true;
-    const refreshAudience = async () => {
-      try {
-        const response = await fetch("/api/admin/analytics", { credentials: "same-origin" });
-        if (response.ok && active) setAnalytics(await response.json() as AudienceAnalytics);
-      } catch { /* Keep the last audience snapshot if a refresh is temporarily unavailable. */ }
-    };
-    const timer = window.setInterval(() => void refreshAudience(), 30_000);
-    return () => { active = false; window.clearInterval(timer); };
-  }, [user]);
+    if (!user) return;
+    const timer = window.setInterval(() => void loadDashboard(), 60_000);
+    return () => window.clearInterval(timer);
+  }, [user, loadDashboard]);
 
   async function login(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -149,6 +148,7 @@ export default function AdminPage() {
       if (!response.ok) throw new Error(await readError(response));
       const data = await response.json() as { user: AdminUser };
       setUser(data.user);
+      setActiveSection(data.user.role === "moderator" ? "moderation" : "overview");
       setPassword("");
       await loadDashboard();
     } catch (loginError) {
@@ -280,6 +280,23 @@ export default function AdminPage() {
   ] : [];
   const maxDailyViews = Math.max(1, ...(analytics?.daily.map((day) => day.pageviews) ?? []));
   const maxHourViews = Math.max(1, ...(analytics?.hours.map((hour) => hour.views) ?? []));
+  const sections = user ? [
+    { id: "overview" as const, label: t("Resumen"), icon: LayoutDashboard },
+    ...(user.role !== "moderator" ? [{ id: "audience" as const, label: t("Audiencia"), icon: BarChart3 }] : []),
+    ...(user.role !== "analyst" ? [{ id: "moderation" as const, label: t("Moderación"), icon: Flag, count: flags.length }] : []),
+    ...(user.role === "admin" ? [{ id: "team" as const, label: t("Equipo"), icon: Users }] : []),
+    { id: "account" as const, label: t("Mi cuenta"), icon: KeyRound },
+  ] : [];
+  const filteredFlags = useMemo(() => {
+    const query = flagSearch.trim().toLocaleLowerCase();
+    return flags.filter((flag) => {
+      if (flagTypeFilter !== "all" && flag.targetType !== flagTypeFilter) return false;
+      if (!query) return true;
+      const searchable = [flag.targetType, flag.targetId, ...flag.reasons.map((reason) => t(reason)), flag.target?.direction, flag.target?.departureTime]
+        .filter(Boolean).join(" ").toLocaleLowerCase();
+      return searchable.includes(query);
+    });
+  }, [flags, flagSearch, flagTypeFilter, t]);
 
   return <div className="app-shell admin-shell">
     <header className="topbar">
@@ -297,13 +314,16 @@ export default function AdminPage() {
         </form>
         {error && <p className="admin-error" role="alert">{error}</p>}
       </section> : user ? <>
-        <div className="admin-heading"><div><p className="section-kicker"><Shield size={14} />{t("PANEL PRIVADO")}</p><h1>{t("Administración")}</h1><p>{t("Sesión de")} <strong>{user.username}</strong> · {user.role}</p></div><button className="flag-button" type="button" onClick={() => void loadDashboard()} disabled={loading}><RefreshCw size={15} />{t("Actualizar")}</button></div>
+        <div className="admin-heading"><div><p className="section-kicker"><Shield size={14} />{t("PANEL PRIVADO")}</p><h1>{t("Administración")}</h1><p>{t("Sesión de")} <strong>{user.username}</strong> · {user.role}</p></div><div className="admin-refresh"><span><i className={loading ? "is-loading" : ""} />{lastUpdatedAt ? `${t("Actualizado")} ${new Date(lastUpdatedAt).toLocaleTimeString()}` : t("Cargando datos")}</span><button className="flag-button" type="button" onClick={() => void loadDashboard()} disabled={loading}><RefreshCw size={15} />{loading ? t("Actualizando…") : t("Actualizar")}</button></div></div>
+        <nav className="admin-nav" aria-label={t("Secciones de administración")}>{sections.map(({ id, label, icon: Icon, ...item }) => <button key={id} type="button" className={activeSection === id ? "is-active" : ""} aria-current={activeSection === id ? "page" : undefined} onClick={() => setActiveSection(id)}><Icon size={17} /><span>{label}</span>{"count" in item && item.count != null && item.count > 0 && <b>{item.count}</b>}</button>)}</nav>
         {error && <p className="admin-error" role="alert">{error}</p>}{message && <p className="admin-success" role="status">{message}</p>}
-        <section className="admin-section"><div className="admin-section-title"><div><p className="section-kicker">{t("ACTIVIDAD")}</p><h2>{t("Estadísticas de uso")}</h2></div></div>
+        {activeSection === "overview" && <section className="admin-overview-banner"><div><p className="section-kicker"><Activity size={14} />{t("PULSO DEL SERVICIO")}</p><h2>{t("Actividad de MapGarraf")}</h2><p>{t("Resumen operativo y avisos que requieren atención.")}</p></div><div className="admin-overview-pulse"><span>{t("Buses con señal reciente")}</span><strong>{stats?.liveVehicles ?? "—"}</strong><small><i />{t("actualización automática cada minuto")}</small></div></section>}
+        {activeSection === "overview" && <section className="admin-section"><div className="admin-section-title"><div><p className="section-kicker">{t("ACTIVIDAD")}</p><h2>{t("Estadísticas de uso")}</h2></div></div>
           <div className="admin-metrics">{metricItems.map(([label, value]) => <article className="admin-metric" key={label}><span>{label}</span><strong>{value}</strong></article>)}</div>
           <p className="admin-note">{t("Son contadores agregados de señales y actividad de la app; no identifican visitantes ni equivalen a visitas únicas.")}</p>
-        </section>
-        {analytics && <section className="admin-section admin-audience"><div className="admin-section-title"><div><p className="section-kicker">{t("AUDIENCIA · ANALÍTICA CON CONSENTIMIENTO")}</p><h2>{t("Visitas y audiencia")}</h2></div><span className="admin-live-count"><i />{analytics.online.visitors} {t("navegadores activos")}</span></div>
+          {user.role !== "analyst" && <div className={`admin-attention ${flags.length ? "has-flags" : "is-clear"}`}><span className="admin-attention-icon">{flags.length ? <AlertTriangle size={19} /> : <Check size={19} />}</span><div><strong>{flags.length ? t("Hay avisos que revisar") : t("No hay avisos pendientes")}</strong><p>{flags.length ? `${flags.length} ${t("reportes comunitarios esperan revisión")}` : t("La cola de moderación está al día.")}</p></div><button className="admin-text-action" type="button" onClick={() => setActiveSection("moderation")}>{t("Abrir moderación")}<ArrowLeft size={14} /></button></div>}
+        </section>}
+        {activeSection === "audience" && analytics && <section className="admin-section admin-audience"><div className="admin-section-title"><div><p className="section-kicker">{t("AUDIENCIA · ANALÍTICA CON CONSENTIMIENTO")}</p><h2>{t("Visitas y audiencia")}</h2></div><span className="admin-live-count"><i />{analytics.online.visitors} {t("navegadores activos")}</span></div>
           <p className="admin-note">{t("Las sesiones, los navegadores únicos y los activos solo reflejan a quienes aceptan la analítica opcional. Las páginas vistas y las visitas diarias también incluyen el conteo anónimo: totales agregados por página y día, sin identificar visitantes ni guardar secuencias individuales. El panel muestra transiciones agregadas entre pares de rutas. Los registros se borran a los 30 días. Activo significa que una página recibió actividad en los últimos 2 minutos.")}</p>
           <div className="admin-audience-periods">{([
             ["24 h", "h24"], ["7 días", "d7"], ["30 días", "d30"],
@@ -318,7 +338,7 @@ export default function AdminPage() {
             <article className="admin-audience-panel admin-hour-panel"><h3>{t("Horas de mayor actividad · UTC")}</h3><div className="admin-hour-chart">{Array.from({ length: 24 }, (_, hour) => { const item = analytics.hours.find((entry) => entry.hour === hour); return <div key={hour} title={`${String(hour).padStart(2, "0")}:00 · ${item?.views ?? 0}`}><i style={{ height: `${Math.max(3, (item?.views ?? 0) / maxHourViews * 100)}%` }} /><small>{hour % 3 === 0 ? String(hour).padStart(2, "0") : ""}</small></div>; })}</div></article>
           </div>
         </section>}
-        <section className="admin-section"><div className="admin-section-title"><div><p className="section-kicker"><KeyRound size={14} />{t("SEGURIDAD DE LA CUENTA")}</p><h2>{t("Cambiar mi contraseña")}</h2></div></div>
+        {activeSection === "account" && <section className="admin-section"><div className="admin-section-title"><div><p className="section-kicker"><KeyRound size={14} />{t("SEGURIDAD DE LA CUENTA")}</p><h2>{t("Cambiar mi contraseña")}</h2></div></div>
           <form className="admin-password-form" onSubmit={(event) => void changeOwnPassword(event)}>
             <label>{t("Contraseña actual")}<input type="password" autoComplete="current-password" value={currentPassword} onChange={(event) => setCurrentPassword(event.target.value)} required /></label>
             <label>{t("Nueva contraseña")}<input type="password" minLength={12} autoComplete="new-password" value={updatedPassword} onChange={(event) => setUpdatedPassword(event.target.value)} required /></label>
@@ -326,22 +346,23 @@ export default function AdminPage() {
             <button className="share-button" type="submit" disabled={submitting}>{submitting ? t("Guardando…") : t("Actualizar contraseña")}</button>
           </form>
           <p className="admin-note">{t("Usa al menos 12 caracteres. Al cambiarla se cerrarán las demás sesiones de esta cuenta.")}</p>
-        </section>
-        {user.role === "admin" && <section className="admin-section"><div className="admin-section-title"><div><p className="section-kicker">{t("ACCESO PRIVADO")}</p><h2>{t("Usuarios y roles")}</h2></div></div>
+        </section>}
+        {activeSection === "team" && user.role === "admin" && <section className="admin-section"><div className="admin-section-title"><div><p className="section-kicker">{t("ACCESO PRIVADO")}</p><h2>{t("Usuarios y roles")}</h2><p>{t("Admin gestiona cuentas; moderator revisa avisos; analyst consulta estadísticas.")}</p></div></div>
           <form className="admin-user-form" onSubmit={createUser}><label>{t("Usuario")}<input minLength={3} maxLength={40} autoComplete="off" value={newUsername} onChange={(event) => setNewUsername(event.target.value)} required /></label><label>{t("Rol")}<select value={newRole} onChange={(event) => setNewRole(event.target.value as AdminUser["role"])}><option value="admin">admin</option><option value="moderator">moderator</option><option value="analyst">analyst</option></select></label><button className="share-button" type="submit" disabled={submitting}>{t("Crear cuenta")}</button></form>
           {createdCredential && <aside className="admin-credential-card" role="status"><div><strong>{t("Contraseña temporal · solo se muestra una vez")}</strong><p>{t("Comparte estas credenciales con la persona titular ahora; no se guardan en el panel.")}</p></div><span>{t("Usuario")}: <strong>{createdCredential.username}</strong> · {t("Rol")}: <strong>{createdCredential.role}</strong></span><label>{t("Contraseña temporal")}<input readOnly value={createdCredential.password} onFocus={(event) => event.currentTarget.select()} /></label><div><button className="flag-button" type="button" onClick={() => void copyCreatedCredentials()}><Copy size={14} />{t("Copiar credenciales")}</button><button className="flag-button" type="button" onClick={() => setCreatedCredential(null)}>{t("Ocultar")}</button></div></aside>}
           <div className="admin-user-list">{adminUsers.map((item) => <article key={item.id}><div><strong>{item.username}</strong><small>{t("Cuenta administrativa")}</small></div><select aria-label={`${t("Rol de")} ${item.username}`} value={item.role} disabled={item.id === user.id} onChange={(event) => void changeUserRole(item, event.target.value as AdminUser["role"])}><option value="admin">admin</option><option value="moderator">moderator</option><option value="analyst">analyst</option></select><button className="admin-remove-button" type="button" aria-label={`${t("Eliminar")} ${item.username}`} disabled={item.id === user.id} onClick={() => void removeUser(item)}><Trash2 size={14} /></button></article>)}</div>
           <p className="admin-note">{t("Los usuarios no tienen registro público. Solo una cuenta admin puede crear cuentas e indicar su rol.")}</p>
         </section>}
-        {user.role !== "analyst" && <section className="admin-section"><div className="admin-section-title"><div><p className="section-kicker"><AlertTriangle size={14} />{t("REVISIÓN COMUNITARIA")}</p><h2>{t("Avisos reportados")}</h2></div><span className="admin-count">{flags.length}</span></div>
-          {loading ? <p className="admin-note">{t("Cargando…")}</p> : flags.length ? <div className="admin-flag-list">{flags.map((flag) => <article className="admin-flag-card" key={`${flag.targetType}:${flag.targetId}`}>
+        {activeSection === "moderation" && user.role !== "analyst" && <section className="admin-section"><div className="admin-section-title"><div><p className="section-kicker"><AlertTriangle size={14} />{t("REVISIÓN COMUNITARIA")}</p><h2>{t("Avisos reportados")}</h2><p>{t("Revisa señales dudosas y retira contenido cuando corresponda.")}</p></div><span className="admin-count">{flags.length}</span></div>
+          <div className="admin-moderation-tools"><label className="admin-search"><Search size={16} /><input type="search" value={flagSearch} onChange={(event) => setFlagSearch(event.target.value)} placeholder={t("Buscar por salida, sentido, ID o motivo")} aria-label={t("Buscar reportes")} /></label><label className="admin-filter"><span>{t("Tipo")}</span><select value={flagTypeFilter} onChange={(event) => setFlagTypeFilter(event.target.value as typeof flagTypeFilter)}><option value="all">{t("Todos los tipos")}</option><option value="vehicle">{t("Ubicaciones de bus")}</option><option value="delay">{t("Avisos de retraso")}</option></select></label><span className="admin-filter-count">{filteredFlags.length} / {flags.length} {t("avisos")}</span></div>
+          {loading ? <p className="admin-note">{t("Cargando…")}</p> : filteredFlags.length ? <div className="admin-flag-list">{filteredFlags.map((flag) => <article className="admin-flag-card" key={`${flag.targetType}:${flag.targetId}`}>
             <div className="admin-flag-heading"><div><strong>{t(flag.targetType === "vehicle" ? "Ubicación de bus" : "Aviso de retraso")}</strong><span>{flag.flagCount} {t("reportes comunitarios")}</span></div><time>{new Date(flag.lastFlagAt).toLocaleString()}</time></div>
             {flag.target ? <div className="admin-flag-details"><span>{t("Sentido")}: {t(flag.target.direction === "to-tarragona" ? "Hacia Tarragona" : "Hacia Vilanova")}</span>{flag.target.departureTime && <span>{t("Salida")} {flag.target.departureTime}</span>}{flag.target.delayMinutes !== undefined && <span>{flag.target.delayMinutes === null ? t("Indefinido") : `≈ ${flag.target.delayMinutes} min`}</span>}{flag.target.latitude !== undefined && flag.target.longitude !== undefined && <span>{flag.target.latitude.toFixed(3)}, {flag.target.longitude.toFixed(3)}</span>}</div> : <p className="admin-note">{t("El contenido original ya no está disponible.")}</p>}
             <p className="admin-reasons">{t("Motivos")} · {flag.reasons.map((reason) => t(reason)).join(", ")}</p>
             <div className="admin-flag-actions"><button className="flag-button" type="button" disabled={submitting} onClick={() => void resolveFlag(flag, "dismiss")}><Check size={14} />{t("Revisado")}</button><button className="admin-remove-button" type="button" disabled={submitting} onClick={() => void resolveFlag(flag, "remove")}><Trash2 size={14} />{t("Retirar contenido")}</button></div>
-          </article>)}</div> : <p className="admin-empty">{t("No hay reportes pendientes de revisión.")}</p>}
+          </article>)}</div> : flags.length ? <p className="admin-empty">{t("Ningún aviso coincide con la búsqueda.")}</p> : <p className="admin-empty">{t("No hay reportes pendientes de revisión.")}</p>}
         </section>}
-        <section className="admin-section"><div className="admin-section-title"><div><p className="section-kicker">{t("TRAZABILIDAD")}</p><h2>{t("Acciones recientes")}</h2></div></div>{audit.length ? <ol className="admin-audit-list">{audit.map((item, index) => <li key={`${item.createdAt}-${index}`}><time>{new Date(item.createdAt).toLocaleString()}</time><span>{t(item.action)} · {t(item.targetType)} · {item.targetId.slice(0, 8)}</span></li>)}</ol> : <p className="admin-empty">{t("Aún no hay acciones administrativas.")}</p>}</section>
+        {activeSection === "overview" && <section className="admin-section"><div className="admin-section-title"><div><p className="section-kicker"><Clock3 size={14} />{t("TRAZABILIDAD")}</p><h2>{t("Acciones recientes")}</h2></div><button className="admin-text-action" type="button" onClick={() => setActiveSection("moderation")}>{t("Abrir moderación")}<ArrowLeft size={14} /></button></div>{audit.length ? <ol className="admin-audit-list">{audit.slice(0, 8).map((item, index) => <li key={`${item.createdAt}-${index}`}><time>{new Date(item.createdAt).toLocaleString()}</time><span>{t(item.action)} · {t(item.targetType)} · {item.targetId.slice(0, 8)}</span></li>)}</ol> : <p className="admin-empty">{t("Aún no hay acciones administrativas.")}</p>}</section>}
       </> : !loading ? <section className="admin-login-card admin-private-empty"><span className="admin-shield"><Shield size={23} /></span><h1>{t("Área privada")}</h1><p>{t("Esta sección no está disponible.")}</p><a className="flag-button" href="/">{t("Volver a MapGarraf")}</a></section> : <p className="admin-loading">{t("Comprobando sesión…")}</p>}
     </main>
   </div>;

@@ -8,6 +8,7 @@ import {
   ChevronDown,
   Clock3,
   Compass,
+  Cookie,
   Download,
   Ghost,
   ExternalLink,
@@ -1383,7 +1384,7 @@ export default function App() {
               <div className="menu-action-list">
                 <button className="menu-list-action" onClick={() => void installApp()}><Download size={17} />{t("Instalar aplicación")}</button>
                 <button className="menu-list-action" onClick={() => { void fetchReports(); void fetchDelayReports(); }}><RefreshCw size={17} className={loadingReports ? "spin" : ""} />{t("Actualizar buses")}</button>
-                <button className="menu-list-action" type="button" data-cookie-settings>{t("Configurar cookies")}</button>
+                <button className="menu-list-action" type="button" data-cookie-settings><Cookie size={17} />{t("Configurar cookies")}</button>
                 <button className="menu-list-action" onClick={() => { setMenuOpen(false); setAnnouncementOpen(true); }}><Bell size={17} />{t("Novedades")}</button>
               </div>
               <div className="menu-legal-links"><a href="/terms.html">{t("Condiciones de uso")}</a><a href="/privacy.html">{t("Política de privacidad")}</a><a href="/cookies.html">{t("Política de cookies")}</a></div>
