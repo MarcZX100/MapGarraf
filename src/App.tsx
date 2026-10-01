@@ -73,6 +73,12 @@ type InstallPrompt = Event & { prompt: () => Promise<void>; userChoice: Promise<
 
 const initialDraft: Draft = { departureTime: "", occupancy: null, reinforcement: false };
 const ANNOUNCEMENTS = [{
+  id: "share-history-and-reports-2026-10-01",
+  date: "1 de octubre de 2026",
+  dateTime: "2026-10-01",
+  title: "Historial de ubicaciones y reportes",
+  body: "Ahora puedes consultar el historial reciente de ubicaciones compartidas de cada bus y reportar una ubicación o un aviso si parece incorrecto. Los reportes ayudan a la comunidad a detectar información dudosa; no eliminan automáticamente el aviso. También hemos ordenado los ajustes para que sea más fácil encontrar sus opciones desde el móvil.",
+}, {
   id: "resume-shared-bus-2026-09-30",
   date: "30 de septiembre de 2026",
   dateTime: "2026-09-30",
@@ -249,7 +255,7 @@ export default function App() {
   const [flagSubmitting, setFlagSubmitting] = useState(false);
   const [reportsLoaded, setReportsLoaded] = useState(false);
   const [reportsFetchSucceeded, setReportsFetchSucceeded] = useState(false);
-  const [announcementOpen, setAnnouncementOpen] = useState(false);
+  const [announcementView, setAnnouncementView] = useState<"latest" | "all" | null>(null);
   const [menuOpen, setMenuOpen] = useState(false);
   const [pendingRoutePosition, setPendingRoutePosition] = useState<GeolocationPosition | null>(null);
   const [shareState, setShareState] = useState<"idle" | "requesting" | "sharing">("idle");
@@ -359,20 +365,20 @@ export default function App() {
   }, [menuOpen]);
 
   useEffect(() => {
-    const latest = ANNOUNCEMENTS[0];
+    const latest = [...ANNOUNCEMENTS].sort((a, b) => b.dateTime.localeCompare(a.dateTime))[0];
     if (seenAnnouncementIds().includes(latest.id)) return;
     markAnnouncementSeen(latest.id);
-    setAnnouncementOpen(true);
+    setAnnouncementView("latest");
   }, []);
 
   useEffect(() => {
-    if (!announcementOpen) return;
+    if (!announcementView) return;
     const dismissOnEscape = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setAnnouncementOpen(false);
+      if (event.key === "Escape") setAnnouncementView(null);
     };
     window.addEventListener("keydown", dismissOnEscape);
     return () => window.removeEventListener("keydown", dismissOnEscape);
-  }, [announcementOpen]);
+  }, [announcementView]);
 
   useEffect(() => {
     const query = window.matchMedia("(prefers-color-scheme: dark)");
@@ -1029,8 +1035,8 @@ export default function App() {
         <a className="icon-button legal-home-button" href="/" aria-label={t("Volver al mapa")}><MapPinned size={18} /></a>
       </div>
     </header>
-    <LegalPage kind={legalKind} onShowAnnouncements={() => setAnnouncementOpen(true)} />
-    {announcementOpen && <AnnouncementDialog onClose={() => setAnnouncementOpen(false)} />}
+    <LegalPage kind={legalKind} onShowAnnouncements={() => setAnnouncementView("all")} />
+    {announcementView && <AnnouncementDialog view={announcementView} onClose={() => setAnnouncementView(null)} />}
   </div>;
 
   return (
@@ -1075,7 +1081,7 @@ export default function App() {
               <p className="last-service">{t("En este documento, la última llegada al destino figura a las")} {currentDirection.arrivalAtOtherEnd}.</p>
               <div className="source-links"><a href={officialScheduleUrl} target="_blank" rel="noreferrer">{t("Horario actualizado del operador")} <ExternalLink size={14} /></a><a href={publishedPdfUrl} target="_blank" rel="noreferrer">{t("PDF consultado")} <ExternalLink size={14} /></a><a href={officialTariffUrl} target="_blank" rel="noreferrer">{t("Tarifas oficiales")} <ExternalLink size={14} /></a></div>
             </section>
-            <SiteFooter onShowAnnouncements={() => setAnnouncementOpen(true)} />
+            <SiteFooter onShowAnnouncements={() => setAnnouncementView("all")} />
           </div>
         </section>
 
@@ -1296,7 +1302,7 @@ export default function App() {
         </section>
 
         <section className="trust-card"><div className="trust-icon"><Compass size={19} /></div><div><strong>{t("Una herramienta independiente")}</strong><p>{t("No está afiliada a BusGarraf ni recibe datos del operador. Las posiciones son aportaciones voluntarias y no oficiales.")}</p></div></section>
-        <SiteFooter onShowAnnouncements={() => setAnnouncementOpen(true)} />
+        <SiteFooter onShowAnnouncements={() => setAnnouncementView("all")} />
         </div>
         </section>
 
@@ -1348,7 +1354,7 @@ export default function App() {
               })}</ol>
               <p className="map-footnote">{t("Las ubicaciones exactas pueden variar; consulta la web de BusGarraf para confirmar la parada.")}</p>
             </section>
-            <SiteFooter onShowAnnouncements={() => setAnnouncementOpen(true)} />
+            <SiteFooter onShowAnnouncements={() => setAnnouncementView("all")} />
           </div>
         </section>
       </main>
@@ -1385,7 +1391,7 @@ export default function App() {
                 <button className="menu-list-action" onClick={() => void installApp()}><Download size={17} />{t("Instalar aplicación")}</button>
                 <button className="menu-list-action" onClick={() => { void fetchReports(); void fetchDelayReports(); }}><RefreshCw size={17} className={loadingReports ? "spin" : ""} />{t("Actualizar buses")}</button>
                 <button className="menu-list-action" type="button" data-cookie-settings><Cookie size={17} />{t("Configurar cookies")}</button>
-                <button className="menu-list-action" onClick={() => { setMenuOpen(false); setAnnouncementOpen(true); }}><Bell size={17} />{t("Novedades")}</button>
+                <button className="menu-list-action" onClick={() => { setMenuOpen(false); setAnnouncementView("all"); }}><Bell size={17} />{t("Novedades")}</button>
               </div>
               <div className="menu-legal-links"><a href="/terms.html">{t("Condiciones de uso")}</a><a href="/privacy.html">{t("Política de privacidad")}</a><a href="/cookies.html">{t("Política de cookies")}</a></div>
             </section>
@@ -1393,7 +1399,7 @@ export default function App() {
         </section>
       </div>}
 
-      {announcementOpen && <AnnouncementDialog onClose={() => setAnnouncementOpen(false)} />}
+      {announcementView && <AnnouncementDialog view={announcementView} onClose={() => setAnnouncementView(null)} />}
 
       {flagTarget && <div className="dialog-backdrop" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !flagSubmitting) setFlagTarget(null); }}>
         <section className="install-dialog flag-dialog" role="dialog" aria-modal="true" aria-labelledby="flag-dialog-title">
@@ -1434,16 +1440,30 @@ export default function App() {
   );
 }
 
-function AnnouncementDialog({ onClose }: { onClose: () => void }) {
-  const announcement = ANNOUNCEMENTS[0];
+function AnnouncementDialog({ view, onClose }: { view: "latest" | "all"; onClose: () => void }) {
+  const announcements = [...ANNOUNCEMENTS].sort((a, b) => b.dateTime.localeCompare(a.dateTime));
+  const latest = announcements[0];
   const { language, t } = useLanguage();
+  const formatDate = (dateTime: string) => new Date(`${dateTime}T12:00:00Z`).toLocaleDateString(language, { dateStyle: "long", timeZone: "UTC" });
   return <div className="dialog-backdrop" role="presentation" onClick={onClose}>
-    <section className="install-dialog announcement-dialog" role="dialog" aria-modal="true" aria-labelledby="announcement-title" aria-describedby="announcement-body" onClick={(event) => event.stopPropagation()}>
+    <section className={`install-dialog announcement-dialog${view === "all" ? " announcement-archive" : ""}`} role="dialog" aria-modal="true" aria-labelledby="announcement-title" onClick={(event) => event.stopPropagation()}>
       <button className="dialog-close" onClick={onClose} aria-label={t("Cerrar anuncio")}><X size={18} /></button>
       <span className="install-dialog-icon"><Bell size={22} /></span>
-      <p className="announcement-kicker">{t("NOVEDADES · ")}<time dateTime={announcement.dateTime}>{new Date(`${announcement.dateTime}T12:00:00Z`).toLocaleDateString(language, { dateStyle: "long", timeZone: "UTC" })}</time></p>
-      <h2 id="announcement-title">{t(announcement.title)}</h2>
-      <p id="announcement-body">{t(announcement.body)}</p>
+      {view === "latest" ? <>
+        <p className="announcement-kicker">{t("NOVEDADES · ")}<time dateTime={latest.dateTime}>{formatDate(latest.dateTime)}</time></p>
+        <h2 id="announcement-title">{t(latest.title)}</h2>
+        <p className="announcement-entry-body" id="announcement-body">{t(latest.body)}</p>
+      </> : <>
+        <p className="announcement-kicker">{t("ACTUALIZACIONES")}</p>
+        <h2 id="announcement-title">{t("Todas las novedades")}</h2>
+        <div className="announcement-list">
+          {announcements.map((announcement) => <article className="announcement-entry" key={announcement.id}>
+            <time className="announcement-date" dateTime={announcement.dateTime}>{formatDate(announcement.dateTime)}</time>
+            <h3>{t(announcement.title)}</h3>
+            <p className="announcement-entry-body">{t(announcement.body)}</p>
+          </article>)}
+        </div>
+      </>}
       <button className="share-button dialog-action" onClick={onClose}>{t("Entendido")}</button>
     </section>
   </div>;

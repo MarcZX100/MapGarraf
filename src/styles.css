@@ -340,6 +340,13 @@ h1 span { color: var(--teal); }
 .announcement-dialog .announcement-kicker { margin: 0 0 7px; color: var(--teal); font-size: 9px; font-weight: 800; letter-spacing: .8px; }
 .announcement-dialog h2 { padding-right: 15px; text-align: left; }
 .announcement-dialog #announcement-body { margin: 10px 0 18px; color: var(--muted); text-align: left; }
+.announcement-dialog.announcement-archive { width: min(100%, 520px); max-height: min(86dvh, 760px); display: flex; flex-direction: column; overflow: hidden; }
+.announcement-archive .announcement-list { min-height: 0; margin: 14px -5px 18px; padding: 0 5px; overflow-y: auto; overscroll-behavior: contain; }
+.announcement-entry { padding: 14px 0; border-top: 1px solid var(--line); }
+.announcement-entry:first-child { padding-top: 0; border-top: 0; }
+.announcement-date { color: var(--teal); font-size: 10px; font-weight: 750; }
+.announcement-entry h3 { margin: 5px 0 0; color: var(--ink); font-size: 15px; line-height: 1.35; }
+.announcement-dialog .announcement-entry-body { margin: 7px 0 0; color: var(--muted); text-align: left; }
 .announcement-dialog .dialog-action { width: 100%; }
 .dialog-close { position: absolute; top: 13px; right: 13px; width: 33px; height: 33px; border: 0; border-radius: 10px; background: #f0f4f1; color: #6f7e78; display: grid; place-items: center; cursor: pointer; }
 .install-dialog-icon { width: 49px; height: 49px; margin: 2px auto 13px; border-radius: 16px; background: #e6f3ed; color: var(--teal); display: grid; place-items: center; }
