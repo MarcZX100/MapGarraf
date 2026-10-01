@@ -6,7 +6,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const publicDir = path.join(root, "public");
 const schedule = JSON.parse(fs.readFileSync(path.join(root, "shared/timetables.json"), "utf8"));
 const canonical = "https://bus.nekokoneko.org/busgarraf-vilanova-tarragona.html";
-const contentReviewed = "2026-09-29";
+const contentReviewed = "2026-10-01";
 const stopTowns = {
   "Plaça Eduard Maristany": "Vilanova i la Geltrú",
   "C/ Pare Garí": "Vilanova i la Geltrú",
@@ -46,7 +46,7 @@ function renderStopSchedule(direction) {
   return `<section class="timetable-section"><h3>${escapeHtml(direction.start)} → ${escapeHtml(direction.end)}</h3><p>Salidas desde ${escapeHtml(direction.start)}: <strong>${direction.departures.map(escapeHtml).join(" · ")}</strong></p><p class="hint">Abre una parada para consultar las horas de paso aproximadas de lunes a viernes laborables.</p>${items}</section>`;
 }
 
-const description = "Consulta los horarios del BusGarraf entre Vilanova i la Geltrú y Tarragona, las horas de paso por sus paradas y el recorrido por Cubelles, Cunit, Segur y Calafell.";
+const description = "Consulta el horario del autobús BusGarraf de Vilanova i la Geltrú a Tarragona y en sentido inverso, con las horas de paso y las paradas de Cubelles, Cunit, Segur y Calafell.";
 const allStops = [...new Set([...schedule["to-tarragona"].stops, ...schedule["to-vilanova"].stops])];
 const stopList = allStops.map((stop) => `<li><strong>${escapeHtml(stop)}</strong><span>${escapeHtml(stopTowns[stop] ?? "")}</span></li>`).join("\n");
 const html = `<!doctype html>
@@ -80,10 +80,19 @@ const html = `<!doctype html>
     dateModified: contentReviewed,
     isPartOf: { "@type": "WebSite", name: "MapGarraf", url: "https://bus.nekokoneko.org/" },
     about: { "@type": "Thing", name: "BusGarraf Vilanova i la Geltrú–Tarragona", sameAs: "https://busgarraf.cat/es/lineas/" },
+    breadcrumb: {
+      "@type": "BreadcrumbList",
+      itemListElement: [
+        { "@type": "ListItem", position: 1, name: "Inicio", item: "https://bus.nekokoneko.org/" },
+        { "@type": "ListItem", position: 2, name: "Horarios BusGarraf Vilanova–Tarragona", item: canonical },
+      ],
+    },
   })}</script>
   <!-- MAPGARRAF-STYLES -->
   <style>
     .route-guide-content article { padding-bottom: 24px; }
+    .route-guide-content .breadcrumbs { display: flex; align-items: center; gap: 8px; margin: 0 0 15px; color: var(--muted); font-size: 12px; }
+    .route-guide-content .breadcrumbs a { color: var(--teal); text-underline-offset: 3px; }
     .route-guide-content .lead { max-width: 650px; color: var(--muted); font-size: 16px; }
     .route-guide-content .cta { display: inline-flex; margin: 5px 0 12px; padding: 10px 14px; border-radius: 10px; background: var(--teal); color: white; font-weight: 700; text-decoration: none; }
     .route-guide-content .notice { padding: 13px 15px; border-left: 3px solid var(--amber); border-radius: 8px; background: var(--teal-pale); color: var(--ink); }
@@ -115,9 +124,10 @@ const html = `<!doctype html>
   </header>
   <main class="legal-content route-guide-content">
     <article>
+      <nav class="breadcrumbs" aria-label="Migas de pan"><a href="/">Inicio</a><span aria-hidden="true">›</span><span aria-current="page">Horarios BusGarraf Vilanova–Tarragona</span></nav>
       <div class="page-heading"><div class="eyebrow"><span class="eyebrow-dot"></span>BUSGARRAF · VILANOVA ↔ TARRAGONA</div><h1>Autobús Vilanova–Tarragona: horarios y paradas</h1></div>
-      <p class="lead">Consulta las salidas entre Vilanova i la Geltrú y Tarragona y las horas de paso previstas por Cubelles, Cunit, Segur de Calafell y Calafell.</p>
-      <p class="updated">Horario de días laborables transcrito del documento del operador consultado el 25 de septiembre de 2026. Guía revisada el 29 de septiembre de 2026.</p>
+      <p class="lead">Consulta el horario del autobús BusGarraf de Vilanova i la Geltrú a Tarragona, las salidas en ambos sentidos y las horas de paso previstas por Cubelles, Cunit, Segur de Calafell y Calafell.</p>
+      <p class="updated">Horario de días laborables transcrito del documento del operador consultado el 25 de septiembre de 2026. Guía revisada el 1 de octubre de 2026.</p>
       <a class="cta" href="/">Abrir horarios y mapa de MapGarraf</a>
       <div class="notice"><strong>Información orientativa:</strong> MapGarraf es un proyecto comunitario independiente, no el operador. Los horarios pueden cambiar por festivos, temporada e incidencias, y las horas de paso dependen del tráfico. Confirma tu viaje en la <a href="https://busgarraf.cat/es/lineas/" rel="external">web oficial de BusGarraf</a>.</div>
 
@@ -139,7 +149,6 @@ const html = `<!doctype html>
       <h2>Fuentes y revisión</h2>
       <div class="source"><p>Esta guía se basa en el horario público del operador y distingue las salidas programadas de las posiciones comunitarias. La fecha de consulta se muestra para que puedas valorar si necesitas verificar posibles cambios.</p><p><a href="https://busgarraf.cat/es/lineas/" rel="external">BusGarraf: líneas, paradas y horarios</a> · <a href="https://busgarraf.cat/es/busgarraf-consulta-los-horarios-de-todas-nuestras-lineas/" rel="external">BusGarraf: consulta de horarios</a></p><p>Contenido y herramienta elaborados por Marc Jaen Garrido, responsable particular de MapGarraf. <a href="/privacy.html">Privacidad</a> · <a href="/terms.html">Condiciones de uso</a>.</p></div>
     </article>
-  </main>
     <p class="guide-footer">MapGarraf es independiente de BusGarraf y no recibe datos oficiales de posición. <a href="/">Volver a MapGarraf</a>.</p>
   </main>
   </div>

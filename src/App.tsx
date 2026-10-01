@@ -122,9 +122,9 @@ const NAV_ITEMS = [
   { page: STOPS_PAGE, label: "Paradas", Icon: ListOrdered },
 ] as const satisfies ReadonlyArray<{ page: Page; label: string; Icon: typeof Clock3 }>;
 const PAGE_SEO = {
-  schedule: { title: "Horarios de BusGarraf Tarragona–Vilanova | MapGarraf", description: "Consulta los horarios publicados del BusGarraf entre Tarragona y Vilanova i la Geltrú, con las salidas por parada." },
-  map: { title: "Mapa del BusGarraf Tarragona–Vilanova | MapGarraf", description: "Consulta posiciones compartidas por viajeros, próximas paradas y estimaciones orientativas de llegada del BusGarraf." },
-  stops: { title: "Paradas del BusGarraf Tarragona–Vilanova | MapGarraf", description: "Explora las 16 paradas del recorrido BusGarraf entre Tarragona, El Vendrell, Calafell, Cubelles y Vilanova i la Geltrú." },
+  schedule: { title: "Horarios BusGarraf Vilanova–Tarragona | MapGarraf", description: "Consulta los horarios publicados del autobús BusGarraf entre Vilanova i la Geltrú y Tarragona y las horas de paso por parada." },
+  map: { title: "Mapa BusGarraf Vilanova–Tarragona | MapGarraf", description: "Consulta en el mapa las últimas ubicaciones compartidas, los avisos de retraso y las llegadas estimadas del BusGarraf. Información comunitaria no oficial." },
+  stops: { title: "Paradas BusGarraf: Vilanova, Cubelles y Tarragona | MapGarraf", description: "Explora las 16 paradas del autobús BusGarraf entre Vilanova, Cubelles, Cunit, Calafell, El Vendrell y Tarragona." },
 } as const;
 const LEGAL_SEO = {
   terms: { title: "Condiciones de uso | MapGarraf", description: "Condiciones de uso de MapGarraf, herramienta comunitaria independiente para viajeros del BusGarraf." },
