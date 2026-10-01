@@ -330,9 +330,18 @@ h1 span { color: var(--teal); }
 .page-footer-links { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px 12px; }
 .page-footer-links a, .page-footer-links button { padding: 0; border: 0; background: transparent; color: #637c72; font: inherit; font-size: 9px; text-decoration: underline; text-underline-offset: 2px; cursor: pointer; }
 .page-footer-links .announcement-link { display: inline-flex; align-items: center; gap: 4px; color: var(--teal); font-weight: 700; }
-.language-picker { display: inline-flex; align-items: center; gap: 6px; color: var(--muted, #637c72); font: inherit; font-size: 10px; }
-.language-picker select { max-width: 110px; padding: 4px 7px; border: 1px solid var(--line); border-radius: 7px; background: var(--surface, #fff); color: var(--ink); font: inherit; font-size: 10px; }
-[data-theme="dark"] .language-picker select { background: #101e33; color: #d7e5f7; }
+.language-picker { position: relative; display: inline-flex; flex: 0 0 auto; color: var(--muted); font: inherit; font-size: 10px; }
+.language-picker-trigger { min-height: 36px; padding: 6px 9px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); color: var(--ink); display: inline-flex; align-items: center; justify-content: center; gap: 7px; font: inherit; font-size: 11px; font-weight: 650; cursor: pointer; }
+.language-picker-trigger:hover, .language-picker-trigger[aria-expanded="true"] { border-color: var(--teal); }
+.language-picker-trigger:focus-visible, .language-picker-option:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.language-flag { width: 20px; height: 14px; flex: 0 0 20px; overflow: hidden; border-radius: 3px; box-shadow: 0 0 0 1px rgb(21 45 78 / 12%); display: inline-block; line-height: 0; }
+.language-flag svg { display: block; width: 100%; height: 100%; }
+.language-chevron { width: 6px; height: 6px; margin: -3px 1px 0 2px; border-right: 1.5px solid var(--muted); border-bottom: 1.5px solid var(--muted); transform: rotate(45deg); transition: transform .16s ease, margin .16s ease; }
+.language-picker.is-open .language-chevron { margin-top: 3px; transform: rotate(225deg); }
+.language-picker-options { position: absolute; z-index: 1700; top: calc(100% + 7px); right: 0; min-width: 144px; padding: 5px; border: 1px solid var(--line); border-radius: 12px; background: var(--paper); box-shadow: 0 10px 30px rgb(7 24 45 / 20%); display: grid; gap: 2px; }
+.language-picker-option { min-height: 38px; padding: 6px 8px; border: 0; border-radius: 8px; background: transparent; color: var(--ink); display: flex; align-items: center; gap: 9px; text-align: left; font: inherit; font-size: 11px; cursor: pointer; }
+.language-picker-option:hover, .language-picker-option[aria-selected="true"] { background: var(--teal-pale); }
+.language-check { margin-left: auto; color: var(--teal); font-weight: 800; }
 .dialog-backdrop { position: fixed; z-index: 2000; inset: 0; padding: 20px; background: rgb(12 34 31 / 48%); display: grid; place-items: center; backdrop-filter: blur(3px); }
 .install-dialog { position: relative; width: min(100%, 360px); padding: 25px 21px 20px; border-radius: 21px; background: #fff; box-shadow: 0 16px 60px rgb(0 0 0 / 18%); text-align: center; animation: appear .16s ease-out; }
 .announcement-dialog { text-align: left; }
@@ -383,9 +392,7 @@ h1 span { color: var(--teal); }
 .menu-setting strong { font-size: 12px; }
 .menu-setting small, .menu-help { color: var(--muted); font-size: 10px; line-height: 1.45; }
 .menu-setting small { margin-top: 3px; }
-.menu-setting .language-picker { flex: 0 0 auto; }
-.menu-setting .language-picker > span { display: none; }
-.menu-setting .language-picker select { max-width: 118px; padding: 8px 9px; border-radius: 9px; font-size: 11px; }
+.menu-setting .language-picker-trigger { min-height: 40px; padding: 8px 10px; }
 .menu-action { min-height: 38px; padding: 0 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); color: var(--ink); display: flex; align-items: center; gap: 7px; font-size: 11px; font-weight: 650; }
 .menu-switch { width: 47px; height: 28px; flex: 0 0 auto; padding: 3px; border: 0; border-radius: 99px; background: #9ba9b8; cursor: pointer; transition: background .16s ease; }
 .menu-switch span { display: block; width: 22px; height: 22px; border-radius: 50%; background: white; box-shadow: 0 1px 4px rgb(0 0 0 / 22%); transition: transform .16s ease; }

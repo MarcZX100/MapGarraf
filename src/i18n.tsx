@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 export type Language = "es" | "ca" | "en";
 export function translate(language: Language, text: string): string {
   const connectionError = text.match(/^Error de conexión \((\d+)\)\.$/);
@@ -1149,12 +1149,90 @@ export function useLanguage() {
 }
 export function LanguagePicker() {
   const { language, setLanguage, t } = useLanguage();
-  return <label className="language-picker">
-    <span>{t("Idioma")}</span>
-    <select aria-label={t("Idioma")} value={language} onChange={(event) => setLanguage(event.target.value as Language)}>
-      <option value="es">Español</option>
-      <option value="ca">Català</option>
-      <option value="en">English</option>
-    </select>
-  </label>;
+  const [open, setOpen] = useState(false);
+  const pickerRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const optionRefs = useRef<Array<HTMLButtonElement | null>>([]);
+  const options: Array<{ code: Language; label: string }> = [
+    { code: "es", label: "Español" },
+    { code: "ca", label: "Català" },
+    { code: "en", label: "English" },
+  ];
+  const selected = options.find((option) => option.code === language) ?? options[0];
+
+  useEffect(() => {
+    if (!open) return;
+    const closeOnOutsideClick = (event: PointerEvent) => {
+      if (event.target instanceof Node && !pickerRef.current?.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", closeOnOutsideClick);
+    return () => document.removeEventListener("pointerdown", closeOnOutsideClick);
+  }, [open]);
+
+  const choose = (next: Language) => {
+    setLanguage(next);
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+
+  const onMenuKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const currentIndex = options.findIndex((option) => option.code === language);
+    let nextIndex: number | null = null;
+    if (event.key === "ArrowDown") nextIndex = (currentIndex + 1) % options.length;
+    if (event.key === "ArrowUp") nextIndex = (currentIndex + options.length - 1) % options.length;
+    if (event.key === "Home") nextIndex = 0;
+    if (event.key === "End") nextIndex = options.length - 1;
+    if (event.key === "Escape") {
+      event.preventDefault();
+      setOpen(false);
+      triggerRef.current?.focus();
+      return;
+    }
+    if (nextIndex !== null) {
+      event.preventDefault();
+      optionRefs.current[nextIndex]?.focus();
+    }
+  };
+
+  return <div className={`language-picker${open ? " is-open" : ""}`} ref={pickerRef}>
+    <button
+      className="language-picker-trigger"
+      type="button"
+      ref={triggerRef}
+      aria-label={`${t("Idioma")}: ${selected.label}`}
+      aria-haspopup="listbox"
+      aria-expanded={open}
+      onClick={() => setOpen((current) => !current)}
+      onKeyDown={(event) => {
+        if (event.key === "ArrowDown" || event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          setOpen(true);
+          requestAnimationFrame(() => optionRefs.current[options.findIndex((option) => option.code === language)]?.focus());
+        }
+      }}
+    >
+      <LanguageFlag language={selected.code} />
+      <span className="language-name">{selected.label}</span>
+      <span className="language-chevron" aria-hidden="true" />
+    </button>
+    {open && <div className="language-picker-options" role="listbox" aria-label={t("Idioma")} onKeyDown={onMenuKeyDown}>
+      {options.map((option, index) => <button
+        className="language-picker-option"
+        type="button"
+        role="option"
+        aria-selected={option.code === language}
+        key={option.code}
+        ref={(node) => { optionRefs.current[index] = node; }}
+        onClick={() => choose(option.code)}
+      ><LanguageFlag language={option.code} /><span>{option.label}</span>{option.code === language && <span className="language-check" aria-hidden="true">✓</span>}</button>)}
+    </div>}
+  </div>;
+}
+
+function LanguageFlag({ language }: { language: Language }) {
+  return <span className={`language-flag flag-${language}`} aria-hidden="true">
+    {language === "es" ? <svg viewBox="0 0 30 20"><path fill="#AA151B" d="M0 0h30v20H0z"/><path fill="#F1BF00" d="M0 5h30v10H0z"/></svg> : null}
+    {language === "ca" ? <svg viewBox="0 0 30 20"><path fill="#F5C542" d="M0 0h30v20H0z"/><path fill="#C62828" d="M0 2h30v2H0zm0 4h30v2H0zm0 4h30v2H0zm0 4h30v2H0z"/></svg> : null}
+    {language === "en" ? <svg viewBox="0 0 60 30"><path fill="#012169" d="M0 0h60v30H0z"/><path fill="#FFF" d="m0 0 60 30v-5L10 0zm60 0L0 30v-5L50 0z"/><path fill="#C8102E" d="m0 0 60 30v-2L4 0zm60 0L0 30v-2L56 0z"/><path fill="#FFF" d="M24 0h12v30H24zM0 9h60v12H0z"/><path fill="#C8102E" d="M27 0h6v30h-6zM0 12h60v6H0z"/></svg> : null}
+  </span>;
 }
