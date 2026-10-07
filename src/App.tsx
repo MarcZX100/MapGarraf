@@ -50,7 +50,7 @@ declare global {
 type Occupancy = "low" | "medium" | "high" | null;
 type ShareSession = { id: string; token: string; deleteToken: string };
 type Draft = { departureTime: string; occupancy: Occupancy; reinforcement: boolean };
-type MapReport = BusReport & { supportCount: number; containsOwn: boolean };
+type MapReport = BusReport & { supportCount: number; containsOwn: boolean; sourceReportIds: string[] };
 type DelayStage = "not-arrived" | "in-route";
 type DelayReport = { id: string; direction: Direction; departureTime: string; delayMinutes: number | null; stage: DelayStage; createdAt: string; communityFlagCount?: number };
 type DelaySummary = { latestId: string; communityFlagCount: number; departureTime: string; stage: DelayStage; delayMinutes: number | null; count: number; createdAt: string };
@@ -599,7 +599,14 @@ export default function App() {
   }
 
   const trackedGhost = ghosts.find((ghost) => ghost.id === trackedMapBusId) ?? null;
-  const trackedMapReport = trackedGhost ? null : (activeReports.find((report) => report.id === trackedMapBusId) ?? activeReports[0] ?? null);
+  const trackedGhostDeparture = trackedMapBusId?.startsWith(`ghost-${direction}-`)
+    ? trackedMapBusId.slice(`ghost-${direction}-`.length)
+    : null;
+  const trackedMapReport = trackedGhost ? null : (activeReports.find((report) =>
+    report.id === trackedMapBusId
+      || report.sourceReportIds.includes(trackedMapBusId ?? "")
+      || (trackedGhostDeparture !== null && (report.tripDepartureTime ?? report.departureTime) === trackedGhostDeparture),
+  ) ?? null);
   const currentDirection = timetables[direction];
   const delaySummaries = useMemo(() => {
     const groups = new Map<string, DelayReport[]>();
@@ -706,11 +713,14 @@ export default function App() {
   }, [mapExpanded]);
 
   useEffect(() => {
-    if (mapExpanded && !trackedMapBusId && activeReports.length) {
-      setTrackedMapBusId(activeReports[0].id);
-      setFollowMapBus(true);
+    if (mapExpanded && !trackedMapBusId) {
+      const firstBusId = activeReports[0]?.id ?? ghosts[0]?.id ?? null;
+      if (firstBusId) {
+        setTrackedMapBusId(firstBusId);
+        setFollowMapBus(true);
+      }
     }
-  }, [activeReports, mapExpanded, trackedMapBusId]);
+  }, [activeReports, ghosts, mapExpanded, trackedMapBusId]);
 
   function askAboutRouteDeviation(position: GeolocationPosition, error: unknown) {
     if ((error as ApiError)?.code !== "LOCATION_OFF_ROUTE") return false;
@@ -956,6 +966,7 @@ export default function App() {
   async function chooseDirection(next: Direction) {
     if (shareState !== "idle" || next === direction) return;
     setDirection(next);
+    setTrackedMapBusId(null);
     clearCurrentBusCookie();
     setSavedCurrentBus(null);
     restoredCurrentBusRef.current = null;
@@ -978,8 +989,12 @@ export default function App() {
   }
 
   function openExpandedMap() {
-    setTrackedMapBusId(activeReports[0]?.id ?? null);
-    setFollowMapBus(activeReports.length > 0);
+    // Preserve the selected bus when the user closes and reopens the map.
+    if (!trackedMapBusId) {
+      const firstBusId = activeReports[0]?.id ?? ghosts[0]?.id ?? null;
+      setTrackedMapBusId(firstBusId);
+      setFollowMapBus(firstBusId !== null);
+    }
     setMapExpanded(true);
   }
 
@@ -1568,6 +1583,7 @@ function aggregateReports(reports: BusReport[], ownId: string | null, direction:
       reinforcement: group.some((report) => report.reinforcement),
       supportCount: group.length,
       containsOwn: group.some((report) => report.id === ownId),
+      sourceReportIds: group.map((report) => report.id),
     };
   });
 }
